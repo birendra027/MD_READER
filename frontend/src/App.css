@@ -1084,6 +1084,7 @@ html, body, #root {
   flex: 1;
   overflow: hidden;
   min-height: 0;
+  min-width: 0;
 }
 
 .tool-page--split {
@@ -1420,12 +1421,16 @@ html, body, #root {
   padding: 24px;
   gap: 16px;
   overflow-y: auto;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .parquet-upload-area {
   display: flex;
   flex-direction: column;
   align-items: center;
+  width: 100%;
 }
 
 .parquet-file-input {
@@ -1446,6 +1451,7 @@ html, body, #root {
   background: var(--panel-bg);
   cursor: pointer;
   transition: all var(--transition);
+  box-sizing: border-box;
 }
 .parquet-drop-zone:hover {
   border-color: var(--accent);
@@ -1460,6 +1466,8 @@ html, body, #root {
   font-size: 15px;
   color: var(--text);
   font-weight: 500;
+  word-break: break-all;
+  text-align: center;
 }
 
 .parquet-drop-hint {
@@ -1471,6 +1479,7 @@ html, body, #root {
   display: flex;
   gap: 20px;
   justify-content: center;
+  flex-wrap: wrap;
 }
 
 .parquet-meta-item {
@@ -1484,6 +1493,10 @@ html, body, #root {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+  margin-bottom: 16px;
 }
 
 .parquet-section-title {
@@ -1496,8 +1509,15 @@ html, body, #root {
   border-bottom: 1px solid var(--border);
 }
 
-.parquet-table-scroll {
+.parquet-schema-scroll {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.parquet-table-scroll {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  max-height: 60vh;
 }
 
 .parquet-table {
@@ -1508,7 +1528,7 @@ html, body, #root {
 .parquet-table th,
 .parquet-table td {
   border: 1px solid var(--border);
-  padding: 6px 12px;
+  padding: 8px 14px;
   text-align: left;
   white-space: nowrap;
 }
@@ -1518,6 +1538,7 @@ html, body, #root {
   color: var(--text);
   position: sticky;
   top: 0;
+  z-index: 1;
 }
 .parquet-table td {
   color: var(--text-secondary);
@@ -1701,6 +1722,33 @@ html, body, #root {
 
   .back-btn {
     padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  /* Parquet responsive */
+  .tool-page--parquet {
+    padding: 12px;
+    gap: 12px;
+  }
+  .parquet-drop-zone {
+    padding: 24px 12px;
+  }
+  .parquet-drop-icon {
+    font-size: 28px;
+  }
+  .parquet-drop-text {
+    font-size: 13px;
+  }
+  .parquet-table-scroll {
+    max-height: 50vh;
+  }
+  .parquet-table th,
+  .parquet-table td {
+    padding: 5px 8px;
+    font-size: 11px;
+  }
+  .parquet-section-title {
+    padding: 8px 12px;
     font-size: 12px;
   }
 }

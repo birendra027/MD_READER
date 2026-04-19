@@ -13,11 +13,13 @@ export default function ParquetReader() {
   const [loading, setLoading] = useState(false);
   const [fileName, setFileName] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const processingRef = useRef(false);
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || processingRef.current) return;
 
+    processingRef.current = true;
     setFileName(file.name);
     setError('');
     setLoading(true);
@@ -25,6 +27,9 @@ export default function ParquetReader() {
 
     const formData = new FormData();
     formData.append('file', file);
+
+    // Reset input so re-uploading same file works and StrictMode remount doesn't re-fire
+    if (fileRef.current) fileRef.current.value = '';
 
     try {
       const res = await fetch('/api/parquet/read', {
@@ -43,6 +48,7 @@ export default function ParquetReader() {
       setError((err as Error).message);
     } finally {
       setLoading(false);
+      processingRef.current = false;
     }
   };
 
@@ -91,22 +97,24 @@ export default function ParquetReader() {
           {/* Schema */}
           <details className="parquet-section" open>
             <summary className="parquet-section-title">Schema</summary>
-            <table className="parquet-table">
-              <thead>
-                <tr>
-                  <th>Column</th>
-                  <th>Type</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.schema.map((col, i) => (
-                  <tr key={i}>
-                    <td>{col.name}</td>
-                    <td><code>{col.type}</code></td>
+            <div className="parquet-schema-scroll">
+              <table className="parquet-table">
+                <thead>
+                  <tr>
+                    <th>Column</th>
+                    <th>Type</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {data.schema.map((col, i) => (
+                    <tr key={i}>
+                      <td>{col.name}</td>
+                      <td><code>{col.type}</code></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </details>
 
           {/* Data preview */}
