@@ -1,0 +1,81 @@
+services:
+
+  # ── Ollama LLM server ───────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: md_ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    # ── GPU support (requires NVIDIA Container Toolkit) ──
+    # If you have an NVIDIA GPU, uncomment the block below.
+    # For CPU-only inference, leave it commented out.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+    restart: unless-stopped
+
+  # ── One-off init container: pulls the model into the volume ────
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: md_ollama_init
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    entrypoint: >
+      /bin/sh -c "
+        echo 'Pulling gemma4:31b-cloud...' &&
+        ollama pull gemma4:31b-cloud &&
+        echo 'Model pull complete.'
+      "
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+  # ── FastAPI backend ─────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: md_backend
+    environment:
+      - OPENAI_API_KEY=ollama
+      - OPENAI_BASE_URL=http://ollama:11434/v1
+      - OPENAI_MODEL=gemma4:31b-cloud
+      # Override any other settings as needed
+      # - MAX_TOKENS=4096
+      # - SESSION_TTL_MINUTES=60
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      # Persist sessions and generated output files on the host
+      - ./backend/memory:/app/backend/memory
+      - ./backend/output:/app/backend/output
+    restart: unless-stopped
+
+  # ── React / Nginx frontend ──────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: md_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

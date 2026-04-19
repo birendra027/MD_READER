@@ -1,0 +1,23 @@
+# Python
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+backend/venv/
+sandbox_venv/
+
+# Sensitive config — never bake into image
+backend/.env
+
+# Runtime data — mounted as volumes at runtime
+backend/memory/
+backend/output/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Git / IDE
+.git/
+.gitignore
+.vscode/
+*.md

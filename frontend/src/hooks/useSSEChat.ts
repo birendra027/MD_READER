@@ -215,7 +215,7 @@ export function useSSEChat() {
   }, [isLoading]);
 
   const clearChat = useCallback(() => {
-    setMessages([WELCOME_MESSAGE]);
+    setMessages([]);
     sessionIdRef.current = null;
     localStorage.removeItem(SESSION_KEY);
     setLastMeta(null);

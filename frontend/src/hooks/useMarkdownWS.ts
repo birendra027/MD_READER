@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
-const WS_URL = 'ws://localhost:8000/ws';
+// Derive WebSocket URL from the current page host so this works both
+// in local dev (proxied by Vite) and in the Docker/nginx production build.
+const _proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const WS_URL = `${_proto}//${window.location.host}/ws`;
 
 export type WSStatus = 'connecting' | 'connected' | 'disconnected';
 
