@@ -45,6 +45,9 @@ export function useSSEChat() {
   const [isLoading, setIsLoading] = useState(false);
   const [lastMeta, setLastMeta] = useState<ChatMeta | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(
+    localStorage.getItem(SESSION_KEY)
+  );
   const sessionIdRef = useRef<string | null>(
     localStorage.getItem(SESSION_KEY)
   );
@@ -66,6 +69,7 @@ export function useSSEChat() {
           return;
         }
         sessionIdRef.current = data.session_id;
+        setSessionId(data.session_id);
         localStorage.setItem(SESSION_KEY, data.session_id);
 
         // Convert backend history to Message[]
@@ -173,6 +177,7 @@ export function useSSEChat() {
                 latency_ms: number; tools_called: string[];
               };
               sessionIdRef.current = p.session_id;
+              setSessionId(p.session_id);
               localStorage.setItem(SESSION_KEY, p.session_id);
               setLastMeta({
                 inputTokens: p.input_tokens,
@@ -217,6 +222,7 @@ export function useSSEChat() {
   const clearChat = useCallback(() => {
     setMessages([]);
     sessionIdRef.current = null;
+    setSessionId(null);
     localStorage.removeItem(SESSION_KEY);
     setLastMeta(null);
   }, []);
@@ -225,5 +231,14 @@ export function useSSEChat() {
     abortRef.current?.abort();
   }, []);
 
-  return { messages, isLoading, isRestoring, lastMeta, sendMessage, clearChat, stopStreaming };
+  return {
+    messages,
+    isLoading,
+    isRestoring,
+    lastMeta,
+    sessionId,
+    sendMessage,
+    clearChat,
+    stopStreaming,
+  };
 }

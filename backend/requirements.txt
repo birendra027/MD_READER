@@ -7,3 +7,4 @@ markdown2
 websockets
 pyarrow
 python-multipart
+boto3

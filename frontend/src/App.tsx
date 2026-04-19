@@ -1,9 +1,11 @@
-﻿import { useState, Suspense, lazy } from 'react';
+﻿import { useEffect, useState, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { ChatBot } from './components/ChatBot';
 import { tools } from './tools/registry';
 
 const HomePage = lazy(() => import('./pages/HomePage'));
+const CHAT_OPEN_KEY = 'md_reader_chat_open';
+const CHAT_MINIMIZED_KEY = 'md_reader_chat_minimized';
 
 // Lazy-load each tool page from registry
 const toolRoutes = tools.map(t => ({
@@ -12,10 +14,28 @@ const toolRoutes = tools.map(t => ({
 }));
 
 function Layout() {
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(() => localStorage.getItem(CHAT_OPEN_KEY) === '1');
+  const [chatMinimized, setChatMinimized] = useState(() => localStorage.getItem(CHAT_MINIMIZED_KEY) === '1');
   const navigate = useNavigate();
   const location = useLocation();
   const isHome = location.pathname === '/';
+
+  useEffect(() => {
+    localStorage.setItem(CHAT_OPEN_KEY, chatOpen ? '1' : '0');
+  }, [chatOpen]);
+
+  useEffect(() => {
+    localStorage.setItem(CHAT_MINIMIZED_KEY, chatMinimized ? '1' : '0');
+  }, [chatMinimized]);
+
+  const toggleChat = () => {
+    if (!chatOpen) {
+      setChatOpen(true);
+      setChatMinimized(false);
+      return;
+    }
+    setChatMinimized(prev => !prev);
+  };
 
   return (
     <div className="app">
@@ -32,10 +52,10 @@ function Layout() {
             </button>
           )}
           <button
-            className={`chat-toggle-btn ${chatOpen ? 'active' : ''}`}
-            onClick={() => setChatOpen(o => !o)}
+            className={`chat-toggle-btn ${chatOpen && !chatMinimized ? 'active' : ''}`}
+            onClick={toggleChat}
           >
-            {chatOpen ? '✕ Close Chat' : '💬 Chat'}
+            {!chatOpen ? '💬 Chat' : chatMinimized ? '💬 Restore Chat' : '— Minimize Chat'}
           </button>
         </div>
       </header>
@@ -53,7 +73,12 @@ function Layout() {
 
       {/* Floating Chat Panel - always independent */}
       {chatOpen && (
-        <ChatBot document="" onClose={() => setChatOpen(false)} />
+        <ChatBot
+          document=""
+          isMinimized={chatMinimized}
+          onMinimize={() => setChatMinimized(true)}
+          onRestore={() => setChatMinimized(false)}
+        />
       )}
     </div>
   );

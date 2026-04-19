@@ -12,13 +12,16 @@ logging.getLogger("chatbot").setLevel(logging.INFO)
 from chatbot.router import router as chat_router
 from chatbot.session import cleanup_expired, save_all_sessions, cleanup_output_dir
 from backend.parquet_handler import router as parquet_router
+import s3_client
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app):
-    # Startup: launch background session cleanup task
+    # Startup: ensure S3 bucket exists, launch background session cleanup task
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, s3_client.ensure_bucket)
     task  = asyncio.create_task(cleanup_expired())
     logger.info("Backend started — session cleanup task running")
     yield

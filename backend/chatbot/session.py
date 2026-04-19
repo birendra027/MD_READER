@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from chatbot.models import SessionState, Turn
 from chatbot.config import SESSION_TTL_MINUTES
+import s3_client
 
 logger = logging.getLogger(__name__)
 
@@ -34,17 +35,26 @@ def _memory_path(session_id: str) -> Path:
 
 
 def _save_session_sync(session: SessionState) -> None:
-    """Persist a single session to disk (blocking — run in executor)."""
+    """Persist a single session to disk and to S3 (blocking — run in executor)."""
     data = {
         "session_id": session.session_id,
         "created_at": session.created_at.isoformat(),
         "last_active": session.last_active.isoformat(),
         "history": [{"role": t.role, "content": t.content} for t in session.history],
+        "execution_contexts": session.execution_contexts,
     }
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    # ── local disk ────────────────────────────────────────────────
     path = _memory_path(session.session_id)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.write_text(payload, encoding="utf-8")
     tmp.replace(path)
+    # ── S3 ────────────────────────────────────────────────────────
+    try:
+        key = s3_client._memory_key(session.session_id)
+        s3_client.upload_bytes(key, payload.encode("utf-8"), content_type="application/json")
+    except Exception:
+        logger.warning("S3 session persist failed for %s", session.session_id[:8])
 
 
 def _load_session_sync(session_id: str) -> SessionState | None:
@@ -58,6 +68,7 @@ def _load_session_sync(session_id: str) -> SessionState | None:
         return SessionState(
             session_id=raw["session_id"],
             history=history,
+            execution_contexts=raw.get("execution_contexts", []),
             created_at=datetime.fromisoformat(raw["created_at"]),
             last_active=datetime.fromisoformat(raw["last_active"]),
         )
@@ -67,9 +78,13 @@ def _load_session_sync(session_id: str) -> SessionState | None:
 
 
 def _delete_memory_sync(session_id: str) -> None:
-    """Remove persisted session file from disk."""
+    """Remove persisted session file from disk and all S3 objects for the session."""
     path = _memory_path(session_id)
     path.unlink(missing_ok=True)
+    try:
+        s3_client.delete_session(session_id)
+    except Exception:
+        logger.warning("S3 delete_session failed for %s", session_id[:8])
 
 
 async def get_or_create(session_id: str | None) -> SessionState:
@@ -107,6 +122,27 @@ async def append_turn(session_id: str, role: str, content: str) -> None:
             # Persist after every turn so data survives crashes
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, _save_session_sync, session)
+
+
+async def append_execution_context(session_id: str, content: str, max_items: int = 8) -> None:
+    """Persist hidden execution context for later follow-up questions.
+
+    This is intentionally stored separately from chat history so runtime
+    output/errors can inform later answers without becoming normal visible
+    chat messages.
+    """
+    if not content.strip():
+        return
+    async with _lock:
+        session = _sessions.get(session_id)
+        if not session:
+            return
+        session.execution_contexts.append(content)
+        if len(session.execution_contexts) > max_items:
+            session.execution_contexts = session.execution_contexts[-max_items:]
+        session.last_active = datetime.now(timezone.utc)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _save_session_sync, session)
 
 
 async def get_history(session_id: str) -> list[dict]:

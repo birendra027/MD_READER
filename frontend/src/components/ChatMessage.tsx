@@ -3,6 +3,32 @@ import Markdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import type { Message } from '../hooks/useSSEChat';
 
+const INTERNAL_PATH_RE = /(?:[A-Za-z]:)?(?:[\\/][^\s`"']*)*(?:app[\\/]backend[\\/]output|backend[\\/]output)(?:[\\/][^\s`"']+)*/gi;
+const GENERATED_FILES_LABEL = 'Generated Files folder';
+
+function replaceInternalPath(match: string): string {
+  const parts = match.split(/[\\/]+/).filter(Boolean);
+  const last = parts.length ? parts[parts.length - 1] : '';
+  if (last && last.includes('.')) {
+    return `generated file \"${last}\"`;
+  }
+  return GENERATED_FILES_LABEL;
+}
+
+function sanitizeVisibleText(text: string): string {
+  return text
+    .replace(INTERNAL_PATH_RE, replaceInternalPath)
+    .replace(/Once executed, the file will be available in the\s+`?backend[\\/]output[\\/]?`?\s+directory\.?/gi, `Once executed, the file will appear in the ${GENERATED_FILES_LABEL}.`)
+    .replace(/After execution, report which files were created so the user knows where to find them\.?/gi, `After execution, point the user to the ${GENERATED_FILES_LABEL}.`);
+}
+
+function sanitizeMarkdownOutsideCode(content: string): string {
+  const segments = content.split(/(```[\s\S]*?```)/g);
+  return segments
+    .map(segment => segment.startsWith('```') ? segment : sanitizeVisibleText(segment))
+    .join('');
+}
+
 interface CodeBlockProps {
   lang: string;
   code: string;
@@ -66,7 +92,7 @@ function CodeBlock({ lang, code }: CodeBlockProps) {
       let lastStage = '';
 
       const append = (text: string) => {
-        outputText += text;
+        outputText += sanitizeVisibleText(text);
         setOutput(outputText);
       };
 
@@ -111,6 +137,10 @@ function CodeBlock({ lang, code }: CodeBlockProps) {
               setSuccess(parsed.success);
               if (parsed.files?.length > 0 && parsed.session_id) {
                 setFiles(parsed.files.map((f: string) => ({ name: f, sessionId: parsed.session_id })));
+                // Notify ChatBot header to refresh its file list
+                window.dispatchEvent(new CustomEvent('md-execution-files-updated', {
+                  detail: { sessionId: parsed.session_id },
+                }));
               }
               let summary = '';
               if (parsed.auto_installed?.length > 0) {
@@ -218,6 +248,7 @@ interface Props {
 
 export function ChatMessage({ msg }: Props) {
   const isUser = msg.role === 'user';
+  const assistantContent = isUser ? msg.content : sanitizeMarkdownOutsideCode(msg.content || '');
 
   const components: Components = {
     code({ className, children, ...rest }) {
@@ -246,7 +277,7 @@ export function ChatMessage({ msg }: Props) {
           <span>{msg.content}</span>
         ) : (
           <Markdown components={components}>
-            {msg.content || ''}
+            {assistantContent}
           </Markdown>
         )}
         {msg.isStreaming && !msg.stage && <span className="chat-cursor" />}

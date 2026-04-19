@@ -17,6 +17,21 @@ COPY backend/requirements.txt ./backend/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir -r backend/requirements.txt
 
+# ── Pre-build the sandbox venv with common data/science packages ──
+# This avoids slow runtime downloads when users run PySpark / pandas code.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python3 -m venv --without-pip /app/sandbox_venv && \
+    /app/sandbox_venv/bin/python -c \
+        "import ensurepip; ensurepip._main(['--upgrade', '--default-pip'])" && \
+    /app/sandbox_venv/bin/pip install --no-cache-dir \
+        pyspark \
+        pandas \
+        numpy \
+        matplotlib \
+        pyarrow \
+        scipy \
+        scikit-learn
+
 # Copy backend source
 COPY backend/ ./backend/
 

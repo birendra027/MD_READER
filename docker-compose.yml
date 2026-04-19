@@ -73,11 +73,16 @@ services:
       - OPENAI_API_KEY=ollama
       - OPENAI_BASE_URL=http://ollama:11434/v1
       - OPENAI_MODEL=gemma4:31b-cloud
-      # Override any other settings as needed
-      # - MAX_TOKENS=4096
-      # - SESSION_TTL_MINUTES=60
+      # S3 / LocalStack
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_BUCKET=md-reader-sessions
     depends_on:
       ollama:
+        condition: service_healthy
+      localstack:
         condition: service_healthy
     volumes:
       # Persist sessions and generated output files on the host
@@ -99,3 +104,4 @@ services:
 
 volumes:
   ollama_data:
+  localstack_data:

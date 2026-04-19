@@ -472,6 +472,79 @@ html, body, #root {
   align-items: center;
   gap: 4px;
 }
+.chat-header-files {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.chat-files-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid #c9a200;
+  border-radius: 999px;
+  background: #3a3200;
+  color: #ffd600;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.chat-files-btn:hover {
+  background: #4a4200;
+  border-color: #ffd600;
+}
+.chat-files-icon {
+  font-size: 12px;
+}
+.chat-files-label {
+  line-height: 1;
+}
+.chat-files-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 240px;
+  max-width: 320px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #c9a200;
+  border-radius: 8px;
+  background: #2a2400;
+  box-shadow: var(--shadow-modal);
+  z-index: 130;
+}
+.chat-files-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid #3a3200;
+  color: #e0d080;
+  text-decoration: none;
+  font-size: 12px;
+}
+.chat-files-item:first-child {
+  border-top: none;
+}
+.chat-files-item:hover {
+  background: #3a3200;
+}
+.chat-files-item-icon {
+  font-size: 12px;
+}
+.chat-files-item-name {
+  flex: 1;
+  word-break: break-all;
+}
+.chat-files-empty {
+  padding: 10px;
+  color: #e0d080;
+  font-size: 12px;
+  line-height: 1.4;
+}
 .chat-meta {
   font-size: 11px;
   color: var(--text-faint);

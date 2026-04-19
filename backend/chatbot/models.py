@@ -47,6 +47,7 @@ class Turn(BaseModel):
 class SessionState(BaseModel):
     session_id: str
     history: list[Turn] = Field(default_factory=list)
+    execution_contexts: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=_now_utc)
     last_active: datetime = Field(default_factory=_now_utc)
 

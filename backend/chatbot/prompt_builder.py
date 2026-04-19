@@ -83,6 +83,16 @@ def build_system_prompt(
             f"The user may refer to earlier parts of the conversation."
         )
 
+    if session.execution_contexts:
+        recent_exec = session.execution_contexts[-3:]
+        parts.append(
+            "\n## RECENT CODE EXECUTION CONTEXT\n"
+            "The following execution results are from code the user actually ran in this session. "
+            "Use the most recent execution result first when the user asks follow-up questions about runtime errors, generated files, or code behavior. "
+            "If the user asks where a file is, answer from the newest execution result only: if files were generated, point to the yellow Generated Files folder; if none were generated, say no file was created.\n\n"
+            + "\n\n".join(recent_exec)
+        )
+
     # 3 & 4. For code-first commands: inject the document BEFORE the task
     is_code_first = command.name in _CODE_FIRST_COMMANDS
     doc_section = _build_document_section(document_content)

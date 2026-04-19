@@ -4,7 +4,9 @@ import { ChatMessage } from './ChatMessage';
 
 interface Props {
   document: string;
-  onClose: () => void;
+  isMinimized: boolean;
+  onMinimize: () => void;
+  onRestore: () => void;
 }
 
 const MIN_W = 280;
@@ -37,9 +39,12 @@ function loadSavedSize() {
   };
 }
 
-export function ChatBot({ document: docContent, onClose }: Props) {
-  const { messages, isLoading, isRestoring, lastMeta, sendMessage, clearChat, stopStreaming } = useSSEChat();
+export function ChatBot({ document: docContent, isMinimized, onMinimize, onRestore }: Props) {
+  const { messages, isLoading, isRestoring, lastMeta, sessionId, sendMessage, clearChat, stopStreaming } = useSSEChat();
   const [input, setInput] = useState('');
+  const [files, setFiles] = useState<{ filename: string; url?: string }[]>([]);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const hasSession = Boolean(sessionId);
   const bottomRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -57,6 +62,36 @@ export function ChatBot({ document: docContent, onClose }: Props) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  const refreshFiles = useCallback(async (sid: string) => {
+    try {
+      const res = await fetch(`/chat/files/${encodeURIComponent(sid)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setFiles(Array.isArray(data?.files) ? data.files : []);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!sessionId) {
+      setFiles([]);
+      setFilesOpen(false);
+      return;
+    }
+    void refreshFiles(sessionId);
+  }, [sessionId, messages.length, lastMeta?.latencyMs, refreshFiles]);
+
+  // Re-fetch whenever code execution produces files (fired by ChatMessage)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const sid = (e as CustomEvent<{ sessionId: string }>).detail?.sessionId || sessionId;
+      if (sid) void refreshFiles(sid);
+    };
+    window.addEventListener('md-execution-files-updated', handler);
+    return () => window.removeEventListener('md-execution-files-updated', handler);
+  }, [sessionId, refreshFiles]);
 
   // ── Resize drag logic ──
   const onEdgeDown = useCallback((edge: Edge) => (e: ReactMouseEvent) => {
@@ -123,20 +158,25 @@ export function ChatBot({ document: docContent, onClose }: Props) {
     }
   };
 
-  // ── Close on click outside ──
   useEffect(() => {
     const onClick = (e: globalThis.MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        onClose();
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('.chat-toggle-btn')) return;
+      if (panelRef.current && !panelRef.current.contains(target)) {
+        onMinimize();
       }
     };
-    // Use setTimeout so the opening click doesn't immediately close it
     const id = setTimeout(() => globalThis.document.addEventListener('mousedown', onClick), 0);
     return () => {
       clearTimeout(id);
       globalThis.document.removeEventListener('mousedown', onClick);
     };
-  }, [onClose]);
+  }, [onMinimize]);
+
+  if (isMinimized) {
+    return null;
+  }
 
   return (
     <div
@@ -160,6 +200,38 @@ export function ChatBot({ document: docContent, onClose }: Props) {
       <div className="chat-header">
         <span className="panel-title">💬 Chat Assistant</span>
         <div className="chat-header-actions">
+          <div className="chat-header-files">
+            <button
+              className="chat-files-btn"
+              onClick={() => setFilesOpen(open => !open)}
+              title="Generated Files"
+            >
+              <span className="chat-files-icon">📁</span>
+              <span className="chat-files-label">Generated Files ({files.length})</span>
+            </button>
+            {filesOpen && (
+              <div className="chat-files-menu">
+                {!hasSession && (
+                  <div className="chat-files-empty">Start a chat or run code to create session files.</div>
+                )}
+                {hasSession && files.length === 0 && (
+                  <div className="chat-files-empty">No generated files yet for this session.</div>
+                )}
+                {hasSession && files.map(file => (
+                  <a
+                    key={file.filename}
+                    className="chat-files-item"
+                    href={file.url || `/chat/files/${sessionId}/${encodeURIComponent(file.filename)}`}
+                    download={file.filename}
+                    title={file.filename}
+                  >
+                    <span className="chat-files-item-icon">📄</span>
+                    <span className="chat-files-item-name">{file.filename}</span>
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
           {lastMeta && (
             <span className="chat-meta" title={`Model: ${lastMeta.model} · Tools: ${lastMeta.toolsCalled.join(', ') || 'none'}`}>
               {lastMeta.inputTokens + lastMeta.outputTokens} tok · {lastMeta.latencyMs}ms
@@ -168,8 +240,11 @@ export function ChatBot({ document: docContent, onClose }: Props) {
           <button className="icon-btn" onClick={clearChat} title="Clear conversation">
             🗑 Clear
           </button>
-          <button className="icon-btn icon-btn--close" onClick={onClose} title="Close chat">
-            ✕ Close
+          <button className="icon-btn" onClick={onRestore} title="Restore chat" style={{ display: 'none' }}>
+            Restore
+          </button>
+          <button className="icon-btn icon-btn--close" onClick={onMinimize} title="Minimize chat">
+            — Minimize
           </button>
         </div>
       </div>

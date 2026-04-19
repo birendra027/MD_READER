@@ -25,6 +25,7 @@ from chatbot.tools import (
     _ensure_sandbox, _OUTPUT_DIR, _EXEC_TIMEOUT,
 )
 from chatbot.llm_client import fix_code
+import s3_client
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +42,82 @@ def _session_output_dir(session_id: str) -> Path:
     d = _OUTPUT_DIR / session_id
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+_INTERNAL_OUTPUT_PATH_RE = re.compile(
+    r"(?:[A-Za-z]:)?(?:[\\/][^\s`\"']*)*(?:app[\\/]backend[\\/]output|backend[\\/]output)(?:[\\/][^\s`\"']+)*",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_execution_text(text: str) -> str:
+    """Hide internal output paths before storing runtime context."""
+    def repl(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        parts = [p for p in re.split(r"[\\/]+", raw) if p]
+        last = parts[-1] if parts else ""
+        if "." in last:
+            return f'generated file "{last}"'
+        return "Generated Files folder"
+
+    return _INTERNAL_OUTPUT_PATH_RE.sub(repl, text)
+
+
+def _compact_execution_excerpt(result: "_ExecResult") -> str:
+    """Build a concise, useful runtime excerpt for later chat turns."""
+    combined = []
+    if result.stdout.strip():
+        combined.append(result.stdout.strip())
+    if result.stderr.strip():
+        combined.append(result.stderr.strip())
+    text = _sanitize_execution_text("\n".join(combined)).strip()
+    if not text:
+        return "(no runtime output)"
+    lines = [line for line in text.splitlines() if line.strip()]
+    lines = lines[-40:]
+    excerpt = "\n".join(lines)
+    return excerpt[-3000:]
+
+
+def _build_execution_context_note(
+    language: str,
+    code: str,
+    result: "_ExecResult",
+    auto_installed: list[str],
+    was_fixed: bool,
+) -> str:
+    """Create hidden session context for a completed code execution."""
+    status = "succeeded" if result.exit_code == 0 else "failed"
+    files = ", ".join(result.files) if result.files else "none"
+    note = [
+        f"Execution result ({language}): {status}.",
+        f"Exit code: {result.exit_code}",
+        f"Auto-installed packages: {', '.join(auto_installed) if auto_installed else 'none'}",
+        f"Code was auto-fixed: {'yes' if was_fixed else 'no'}",
+        f"Generated files: {files}",
+        "Relevant runtime output:",
+        _compact_execution_excerpt(result),
+    ]
+    if result.exit_code != 0:
+        note.append(
+            "If the user asks what the error means, explain this specific runtime failure directly rather than asking them to provide the error again."
+        )
+    return "\n".join(note)
+
+
+async def _persist_execution_context(
+    session_id: str,
+    language: str,
+    code: str,
+    result: "_ExecResult",
+    auto_installed: list[str],
+    was_fixed: bool,
+) -> None:
+    """Save hidden execution context so later chat turns can reference it."""
+    if not session_id:
+        return
+    note = _build_execution_context_note(language, code, result, auto_installed, was_fixed)
+    await session_store.append_execution_context(session_id, note)
 
 
 # ── Session persistence endpoints ─────────────────────────────────
@@ -365,7 +442,16 @@ class _ExecResult:
         self.files: list[str] = []
 
 
-async def _stream_subprocess(code: str, language: str, result: _ExecResult, output_dir: Path | None = None):
+def _upload_output_to_s3(out_dir: Path, filenames: list[str], session_id: str) -> None:
+    """Upload execution output files to S3 (best-effort, called in thread)."""
+    for name in filenames:
+        local = out_dir / name
+        if local.is_file():
+            key = s3_client._output_key(session_id, name)
+            s3_client.upload_file(key, local)
+
+
+async def _stream_subprocess(code: str, language: str, result: _ExecResult, output_dir: Path | None = None, session_id: str = ""):
     """Run code in a subprocess and yield SSE output events line by line.
 
     Uses ``subprocess.Popen`` with background reader threads + an
@@ -499,6 +585,9 @@ async def _stream_subprocess(code: str, language: str, result: _ExecResult, outp
         result.files = sorted(
             str(p.name) for p in out_dir.iterdir() if p.is_file()
         )
+        # Upload any new files to S3 (best-effort, non-blocking)
+        if result.exit_code == 0 and result.files and session_id:
+            _upload_output_to_s3(out_dir, result.files, session_id)
         log.info("_stream_subprocess: exit_code=%d lines=%d", result.exit_code, line_count)
 
     except Exception as e:
@@ -519,8 +608,11 @@ async def _stream_subprocess(code: str, language: str, result: _ExecResult, outp
 async def execute_stream(req: ExecuteRequest):
     """Stream real-time code execution output + auto-fix progress via SSE."""
 
+    sess = await session_store.get_or_create(req.session_id or None)
+    effective_session_id = sess.session_id
+
     # Resolve session-specific output directory
-    out_dir = _session_output_dir(req.session_id)
+    out_dir = _session_output_dir(effective_session_id)
 
     async def generate():
         lang = req.language.lower()
@@ -570,14 +662,15 @@ async def execute_stream(req: ExecuteRequest):
         # ── Phase 1: Initial execution ──
         yield _sse("status", {"stage": "running", "detail": "Executing code…"})
         result = _ExecResult()
-        async for chunk in _stream_subprocess(current_code, req.language, result, output_dir=out_dir):
+        async for chunk in _stream_subprocess(current_code, req.language, result, output_dir=out_dir, session_id=effective_session_id):
             yield chunk
 
         if result.exit_code == 0:
+            await _persist_execution_context(effective_session_id, req.language, current_code, result, all_installed, False)
             yield _sse("result", {
                 "success": True, "exit_code": 0, "was_fixed": False,
                 "fixed_code": "", "auto_installed": all_installed,
-                "files": result.files, "session_id": req.session_id,
+                "files": result.files, "session_id": effective_session_id,
             })
             yield _sse("done", "[DONE]")
             return
@@ -605,17 +698,18 @@ async def execute_stream(req: ExecuteRequest):
                 })
                 result = _ExecResult()
                 async for chunk in _stream_subprocess(
-                    current_code, req.language, result, output_dir=out_dir,
+                    current_code, req.language, result, output_dir=out_dir, session_id=effective_session_id,
                 ):
                     yield chunk
                 if result.exit_code == 0 or not result.missing_packages:
                     break
 
         if result.exit_code == 0:
+            await _persist_execution_context(effective_session_id, req.language, current_code, result, all_installed, False)
             yield _sse("result", {
                 "success": True, "exit_code": 0, "was_fixed": False,
                 "fixed_code": "", "auto_installed": all_installed,
-                "files": result.files, "session_id": req.session_id,
+                "files": result.files, "session_id": effective_session_id,
             })
             yield _sse("done", "[DONE]")
             return
@@ -643,16 +737,17 @@ async def execute_stream(req: ExecuteRequest):
                         })
                         result = _ExecResult()
                         async for chunk in _stream_subprocess(
-                            current_code, req.language, result, output_dir=out_dir,
+                            current_code, req.language, result, output_dir=out_dir, session_id=effective_session_id,
                         ):
                             yield chunk
                         if result.exit_code == 0:
+                            await _persist_execution_context(effective_session_id, req.language, current_code, result, all_installed, was_fixed)
                             yield _sse("result", {
                                 "success": True, "exit_code": 0,
                                 "was_fixed": was_fixed,
                                 "fixed_code": current_code if was_fixed else "",
                                 "auto_installed": all_installed,
-                                "files": result.files, "session_id": req.session_id,
+                                "files": result.files, "session_id": effective_session_id,
                             })
                             yield _sse("done", "[DONE]")
                             return
@@ -682,7 +777,7 @@ async def execute_stream(req: ExecuteRequest):
 
             result = _ExecResult()
             async for chunk in _stream_subprocess(
-                current_code, req.language, result, output_dir=out_dir,
+                current_code, req.language, result, output_dir=out_dir, session_id=effective_session_id,
             ):
                 yield chunk
 
@@ -695,16 +790,17 @@ async def execute_stream(req: ExecuteRequest):
                     all_installed.extend(result.missing_packages)
                     result = _ExecResult()
                     async for chunk in _stream_subprocess(
-                        current_code, req.language, result, output_dir=out_dir,
+                        current_code, req.language, result, output_dir=out_dir, session_id=effective_session_id,
                     ):
                         yield chunk
 
             if result.exit_code == 0:
+                await _persist_execution_context(effective_session_id, req.language, current_code, result, all_installed, True)
                 yield _sse("result", {
                     "success": True, "exit_code": 0, "was_fixed": True,
                     "fixed_code": current_code,
                     "auto_installed": all_installed, "files": result.files,
-                    "session_id": req.session_id,
+                    "session_id": effective_session_id,
                 })
                 yield _sse("done", "[DONE]")
                 return
@@ -716,12 +812,13 @@ async def execute_stream(req: ExecuteRequest):
             })
 
         # Exhausted retries
+        await _persist_execution_context(effective_session_id, req.language, current_code, result, all_installed, was_fixed)
         yield _sse("result", {
             "success": False, "exit_code": result.exit_code,
             "was_fixed": was_fixed,
             "fixed_code": current_code if was_fixed else "",
             "auto_installed": all_installed, "files": result.files,
-            "session_id": req.session_id,
+            "session_id": effective_session_id,
         })
         yield _sse("done", "[DONE]")
 
@@ -803,31 +900,51 @@ async def chat_endpoint(req: ChatRequest, request: Request):
     return ChatResponse(reply=full_reply, metadata=metadata)
 
 
-# ── File listing & download (session-scoped) ──────────────────────
+# ── File listing & download (session-scoped, backed by S3) ───────
 
 @router.get("/files/{session_id}")
 async def list_session_files(session_id: str):
-    """Return list of files generated by this session."""
+    """Return all files generated by this session, with S3 pre-signed download URLs."""
     if not _SESSION_RE.match(session_id):
         return {"files": []}
-    d = _OUTPUT_DIR / session_id
-    if not d.is_dir():
-        return {"files": []}
-    files = sorted(
-        {"name": p.name, "size": p.stat().st_size}
-        for p in d.iterdir() if p.is_file()
-    )
-    return {"files": files}
+    loop = asyncio.get_event_loop()
+    items = await loop.run_in_executor(None, s3_client.list_session_files, session_id)
+    # Attach a pre-signed URL to each file so the browser can download directly
+    for item in items:
+        item["url"] = await loop.run_in_executor(
+            None, s3_client.presigned_url, item["key"], 3600
+        )
+    return {"files": items}
+
+
+@router.get("/files/{session_id}/{filename}/url")
+async def get_file_url(session_id: str, filename: str):
+    """Return a fresh pre-signed URL for a specific session file."""
+    if not _SESSION_RE.match(session_id):
+        return {"error": "Invalid session"}
+    safe_name = Path(filename).name
+    key = s3_client._output_key(session_id, safe_name)
+    loop = asyncio.get_event_loop()
+    url = await loop.run_in_executor(None, s3_client.presigned_url, key, 3600)
+    if not url:
+        return {"error": "File not found or S3 unavailable"}
+    return {"url": url, "filename": safe_name, "expires_in": 3600}
 
 
 @router.get("/files/{session_id}/{filename}")
 async def download_session_file(session_id: str, filename: str):
-    """Download a specific file from this session's output."""
+    """Redirect to S3 pre-signed URL; fall back to local file if S3 is unavailable."""
+    from fastapi.responses import RedirectResponse
     if not _SESSION_RE.match(session_id):
         return {"error": "Invalid session"}
-    # Prevent path traversal
     safe_name = Path(filename).name
+    key = s3_client._output_key(session_id, safe_name)
+    loop = asyncio.get_event_loop()
+    url = await loop.run_in_executor(None, s3_client.presigned_url, key, 3600)
+    if url:
+        return RedirectResponse(url, status_code=302)
+    # Fallback: serve directly from local filesystem
     filepath = _OUTPUT_DIR / session_id / safe_name
-    if not filepath.is_file() or not filepath.resolve().is_relative_to((_OUTPUT_DIR / session_id).resolve()):
-        return {"error": "File not found"}
-    return FileResponse(filepath, filename=safe_name)
+    if filepath.is_file() and filepath.resolve().is_relative_to((_OUTPUT_DIR / session_id).resolve()):
+        return FileResponse(filepath, filename=safe_name)
+    return {"error": "File not found"}
