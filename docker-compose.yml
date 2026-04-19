@@ -1,5 +1,25 @@
 services:
 
+  # ── LocalStack (S3 emulator) ────────────────────────────────────
+  localstack:
+    image: localstack/localstack:3
+    container_name: md_localstack
+    environment:
+      - SERVICES=s3
+      - DEFAULT_REGION=us-east-1
+      - LOCALSTACK_HOST=localstack
+    volumes:
+      - localstack_data:/var/lib/localstack
+    ports:
+      - "4566:4566"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health | grep -q '\"s3\"'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
   # ── Ollama LLM server ───────────────────────────────────────────
   ollama:
     image: ollama/ollama:latest
