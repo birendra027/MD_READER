@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+openai
+tenacity
+python-dotenv
+markdown2
+websockets
+pyarrow
+python-multipart
