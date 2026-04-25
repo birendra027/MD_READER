@@ -47,4 +47,13 @@ export const tools: ToolDef[] = [
     path: '/base64',
     component: () => import('../pages/Base64Converter'),
   },
+  {
+    id: 'json-yaml',
+    name: 'JSON ↔ YAML',
+    description: 'Convert between JSON and YAML instantly — paste, convert, copy.',
+    icon: '🔀',
+    color: 'linear-gradient(135deg, #f0883e, #d29922)',
+    path: '/json-yaml',
+    component: () => import('../pages/JsonYamlConverter'),
+  },
 ];

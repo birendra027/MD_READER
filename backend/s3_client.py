@@ -33,7 +33,7 @@ from typing import Any
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, EndpointConnectionError
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 _ENDPOINT = os.getenv("S3_ENDPOINT_URL", "").strip() or None
 _BUCKET = os.getenv("S3_BUCKET", "md-reader-sessions")
 _REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+_S3_DISABLED_REASON: str | None = None
 
 # For LocalStack we need path-style addressing
 _config = Config(
@@ -58,16 +59,62 @@ def _client() -> Any:
     return boto3.client("s3", **kwargs)
 
 
+def is_available() -> bool:
+    """Return whether S3 integration is enabled for the current process."""
+    return _S3_DISABLED_REASON is None
+
+
+def _can_auto_disable() -> bool:
+    """Only auto-disable known local emulators, not real AWS endpoints."""
+    if not _ENDPOINT:
+        return False
+    lowered = _ENDPOINT.lower()
+    return any(host in lowered for host in ("localhost", "127.0.0.1", "localstack"))
+
+
+def _disable_for_process(reason: str) -> None:
+    global _S3_DISABLED_REASON
+    if _S3_DISABLED_REASON is None:
+        _S3_DISABLED_REASON = reason
+        logger.warning(
+            "Disabling S3 integration for this process: %s. Falling back to local disk only.",
+            reason,
+        )
+
+
+def _maybe_disable(exc: Exception, operation: str) -> bool:
+    """Disable S3 after a confirmed local-emulator misconfiguration."""
+    if not _can_auto_disable() or not is_available():
+        return False
+
+    if isinstance(exc, EndpointConnectionError):
+        _disable_for_process(f"{operation} could not reach {_ENDPOINT}")
+        return True
+
+    if isinstance(exc, ClientError):
+        error = exc.response.get("Error", {})
+        code = str(error.get("Code", ""))
+        message = str(error.get("Message", "") or exc)
+        lowered = f"{code} {message}".lower()
+        if "service 's3' is not enabled" in lowered or "not implemented" in lowered:
+            _disable_for_process(f"{operation} failed at {_ENDPOINT}: {message}")
+            return True
+
+    return False
+
+
 # ── Bucket bootstrap ──────────────────────────────────────────────
 
 def ensure_bucket() -> None:
     """Create the bucket if it does not already exist (idempotent)."""
+    if not is_available():
+        return
     s3 = _client()
     try:
         s3.head_bucket(Bucket=_BUCKET)
         logger.debug("S3 bucket '%s' already exists", _BUCKET)
     except ClientError as exc:
-        code = exc.response["Error"]["Code"]
+        code = str(exc.response["Error"]["Code"])
         if code in ("404", "NoSuchBucket"):
             try:
                 if _REGION == "us-east-1":
@@ -80,14 +127,22 @@ def ensure_bucket() -> None:
                 logger.info("Created S3 bucket '%s'", _BUCKET)
             except ClientError:
                 logger.exception("Failed to create bucket '%s'", _BUCKET)
+        elif _maybe_disable(exc, "HeadBucket"):
+            return
         else:
             logger.exception("Unexpected error checking bucket '%s'", _BUCKET)
+    except Exception as exc:
+        if _maybe_disable(exc, "HeadBucket"):
+            return
+        logger.exception("Unexpected error checking bucket '%s'", _BUCKET)
 
 
 # ── Core operations ───────────────────────────────────────────────
 
 def upload_bytes(key: str, data: bytes, content_type: str = "application/octet-stream") -> None:
     """Upload raw bytes to *key* in the session bucket."""
+    if not is_available():
+        return
     try:
         _client().put_object(
             Bucket=_BUCKET,
@@ -96,16 +151,22 @@ def upload_bytes(key: str, data: bytes, content_type: str = "application/octet-s
             ContentType=content_type,
         )
         logger.debug("S3 upload_bytes → %s (%d bytes)", key, len(data))
-    except Exception:
+    except Exception as exc:
+        if _maybe_disable(exc, "PutObject"):
+            return
         logger.exception("S3 upload_bytes failed: key=%s", key)
 
 
 def upload_file(key: str, local_path: Path) -> None:
     """Upload a local file to *key* in the session bucket."""
+    if not is_available():
+        return
     try:
         _client().upload_file(str(local_path), _BUCKET, key)
         logger.debug("S3 upload_file → %s (%s)", key, local_path.name)
-    except Exception:
+    except Exception as exc:
+        if _maybe_disable(exc, "UploadFile"):
+            return
         logger.exception("S3 upload_file failed: key=%s local=%s", key, local_path)
 
 
@@ -115,6 +176,8 @@ def list_session_files(session_id: str) -> list[dict]:
     Each entry:
         {"key": str, "filename": str, "size": int, "last_modified": str}
     """
+    if not is_available():
+        return []
     prefix = _output_prefix(session_id)
     try:
         resp = _client().list_objects_v2(Bucket=_BUCKET, Prefix=prefix)
@@ -128,7 +191,9 @@ def list_session_files(session_id: str) -> list[dict]:
                 "last_modified": obj["LastModified"].isoformat(),
             })
         return items
-    except Exception:
+    except Exception as exc:
+        if _maybe_disable(exc, "ListObjectsV2"):
+            return []
         logger.exception("S3 list_session_files failed: session_id=%s", session_id)
         return []
 
@@ -139,6 +204,8 @@ def presigned_url(key: str, expires_in: int = 3600) -> str:
     For LocalStack in a Docker network the URL will be an internal hostname.
     We rewrite it to the host-facing ``localhost:4566`` so browsers can reach it.
     """
+    if not is_available():
+        return ""
     try:
         url: str = _client().generate_presigned_url(
             "get_object",
@@ -155,7 +222,9 @@ def presigned_url(key: str, expires_in: int = 3600) -> str:
             rewritten = parsed._replace(netloc=f"localhost:{ep.port or 4566}")
             url = urlunparse(rewritten)
         return url
-    except Exception:
+    except Exception as exc:
+        if _maybe_disable(exc, "GeneratePresignedUrl"):
+            return ""
         logger.exception("S3 presigned_url failed: key=%s", key)
         return ""
 
@@ -164,6 +233,8 @@ def delete_session(session_id: str) -> int:
     """Delete all S3 objects for *session_id* (both memory and output).
     Returns the number of objects deleted.
     """
+    if not is_available():
+        return 0
     prefix = f"sessions/{_sanitise(session_id)}/"
     s3 = _client()
     deleted = 0
@@ -175,7 +246,9 @@ def delete_session(session_id: str) -> int:
                 s3.delete_objects(Bucket=_BUCKET, Delete={"Objects": objects})
                 deleted += len(objects)
         logger.info("S3 delete_session: removed %d object(s) for %s", deleted, session_id[:8])
-    except Exception:
+    except Exception as exc:
+        if _maybe_disable(exc, "DeleteSession"):
+            return deleted
         logger.exception("S3 delete_session failed: session_id=%s", session_id)
     return deleted
 

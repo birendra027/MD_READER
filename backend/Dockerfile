@@ -9,28 +9,24 @@ ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 # Tell PySpark workers to use the same Python that runs the backend
 ENV PYSPARK_PYTHON=/usr/local/bin/python3
 ENV PYSPARK_DRIVER_PYTHON=/usr/local/bin/python3
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
 # Install Python dependencies first (better layer caching)
 COPY backend/requirements.txt ./backend/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r backend/requirements.txt
+    pip install -r backend/requirements.txt
 
 # ── Pre-build the sandbox venv with common data/science packages ──
-# This avoids slow runtime downloads when users run PySpark / pandas code.
+# Keep the default image lighter by installing heavyweight packages like
+# pyspark only on first use via the runtime sandbox installer.
+ARG SANDBOX_PREINSTALL_PACKAGES="pandas numpy matplotlib pyarrow scipy scikit-learn"
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m venv --without-pip /app/sandbox_venv && \
     /app/sandbox_venv/bin/python -c \
         "import ensurepip; ensurepip._main(['--upgrade', '--default-pip'])" && \
-    /app/sandbox_venv/bin/pip install --no-cache-dir \
-        pyspark \
-        pandas \
-        numpy \
-        matplotlib \
-        pyarrow \
-        scipy \
-        scikit-learn
+    /app/sandbox_venv/bin/pip install ${SANDBOX_PREINSTALL_PACKAGES}
 
 # Copy backend source
 COPY backend/ ./backend/

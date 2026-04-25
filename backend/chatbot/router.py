@@ -4,6 +4,7 @@ FastAPI router — SSE streaming endpoint + legacy fallback + code execution.
 """
 from __future__ import annotations
 import asyncio
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
+from urllib.parse import quote
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
@@ -42,6 +44,35 @@ def _session_output_dir(session_id: str) -> Path:
     d = _OUTPUT_DIR / session_id
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _local_file_download_url(session_id: str, filename: str) -> str:
+    return f"/chat/files/{session_id}/{quote(filename)}"
+
+
+def _list_local_session_files(session_id: str) -> list[dict]:
+    """Return local output files for a session when S3 is unavailable."""
+    session_dir = _session_output_dir(session_id)
+    if not session_dir.is_dir():
+        return []
+
+    base_dir = session_dir.resolve()
+    items: list[dict] = []
+    for path in sorted(session_dir.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True):
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if not resolved.is_relative_to(base_dir):
+            continue
+        stat = resolved.stat()
+        items.append({
+            "key": s3_client._output_key(session_id, path.name),
+            "filename": path.name,
+            "size": stat.st_size,
+            "last_modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+            "url": _local_file_download_url(session_id, path.name),
+        })
+    return items
 
 
 _INTERNAL_OUTPUT_PATH_RE = re.compile(
@@ -909,11 +940,14 @@ async def list_session_files(session_id: str):
         return {"files": []}
     loop = asyncio.get_event_loop()
     items = await loop.run_in_executor(None, s3_client.list_session_files, session_id)
+    if not items:
+        return {"files": _list_local_session_files(session_id)}
     # Attach a pre-signed URL to each file so the browser can download directly
     for item in items:
-        item["url"] = await loop.run_in_executor(
+        url = await loop.run_in_executor(
             None, s3_client.presigned_url, item["key"], 3600
         )
+        item["url"] = url or _local_file_download_url(session_id, item["filename"])
     return {"files": items}
 
 
@@ -926,9 +960,18 @@ async def get_file_url(session_id: str, filename: str):
     key = s3_client._output_key(session_id, safe_name)
     loop = asyncio.get_event_loop()
     url = await loop.run_in_executor(None, s3_client.presigned_url, key, 3600)
-    if not url:
-        return {"error": "File not found or S3 unavailable"}
-    return {"url": url, "filename": safe_name, "expires_in": 3600}
+    if url:
+        return {"url": url, "filename": safe_name, "expires_in": 3600}
+
+    filepath = _session_output_dir(session_id) / safe_name
+    if filepath.is_file() and filepath.resolve().is_relative_to(_session_output_dir(session_id).resolve()):
+        return {
+            "url": _local_file_download_url(session_id, safe_name),
+            "filename": safe_name,
+            "expires_in": 0,
+        }
+
+    return {"error": "File not found or S3 unavailable"}
 
 
 @router.get("/files/{session_id}/{filename}")
@@ -944,7 +987,8 @@ async def download_session_file(session_id: str, filename: str):
     if url:
         return RedirectResponse(url, status_code=302)
     # Fallback: serve directly from local filesystem
-    filepath = _OUTPUT_DIR / session_id / safe_name
-    if filepath.is_file() and filepath.resolve().is_relative_to((_OUTPUT_DIR / session_id).resolve()):
+    session_dir = _session_output_dir(session_id)
+    filepath = session_dir / safe_name
+    if filepath.is_file() and filepath.resolve().is_relative_to(session_dir.resolve()):
         return FileResponse(filepath, filename=safe_name)
     return {"error": "File not found"}
