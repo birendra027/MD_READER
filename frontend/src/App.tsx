@@ -16,9 +16,25 @@ const toolRoutes = tools.map(t => ({
 function Layout() {
   const [chatOpen, setChatOpen] = useState(() => localStorage.getItem(CHAT_OPEN_KEY) === '1');
   const [chatMinimized, setChatMinimized] = useState(() => localStorage.getItem(CHAT_MINIMIZED_KEY) === '1');
+  const [activeDoc, setActiveDoc] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
   const isHome = location.pathname === '/';
+
+  // Listen for tool pages broadcasting their current content
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { content } = (e as CustomEvent<{ content: string; toolId: string; toolName: string }>).detail;
+      setActiveDoc(content);
+    };
+    window.addEventListener('md-tool-content', handler);
+    return () => window.removeEventListener('md-tool-content', handler);
+  }, []);
+
+  // Clear context when navigating back to the home page
+  useEffect(() => {
+    if (isHome) setActiveDoc('');
+  }, [isHome]);
 
   useEffect(() => {
     localStorage.setItem(CHAT_OPEN_KEY, chatOpen ? '1' : '0');
@@ -74,7 +90,7 @@ function Layout() {
       {/* Floating Chat Panel - always independent */}
       {chatOpen && (
         <ChatBot
-          document=""
+          document={activeDoc}
           isMinimized={chatMinimized}
           onMinimize={() => setChatMinimized(true)}
           onRestore={() => setChatMinimized(false)}

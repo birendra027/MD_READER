@@ -1,4 +1,5 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
+import { broadcastToolContent } from '../hooks/useToolContent';
 
 type ViewMode = 'text' | 'tree' | 'table';
 
@@ -142,6 +143,11 @@ export default function JsonFormatter() {
   const [viewMode, setViewMode] = useState<ViewMode>('text');
   const [search, setSearch] = useState('');
   const [copied, setCopied] = useState(false);
+
+  // Broadcast current content to ChatBot whenever it changes
+  useEffect(() => {
+    broadcastToolContent(input, 'json-formatter', 'JSON Formatter');
+  }, [input]);
 
   const parsed = useMemo(() => {
     if (!input.trim()) return undefined;

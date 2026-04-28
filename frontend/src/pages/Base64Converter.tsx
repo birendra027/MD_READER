@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { broadcastToolContent } from '../hooks/useToolContent';
 
 type Mode = 'encode' | 'decode';
 
@@ -41,6 +42,12 @@ export default function Base64Converter() {
   const copy = () => {
     if (output) navigator.clipboard.writeText(output);
   };
+
+  // Broadcast current content to ChatBot
+  useEffect(() => {
+    const combined = input + (output ? `\n\n--- Output ---\n${output}` : '');
+    broadcastToolContent(combined, 'base64', 'Base64 Converter');
+  }, [input, output]);
 
   return (
     <div className="tool-page tool-page--base64">

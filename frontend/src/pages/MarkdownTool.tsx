@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { MarkdownEditor } from '../components/MarkdownEditor';
 import { MarkdownPreview } from '../components/MarkdownPreview';
 import { useMarkdownWS } from '../hooks/useMarkdownWS';
+import { broadcastToolContent } from '../hooks/useToolContent';
 
 const PLACEHOLDER = `# Welcome to MD Reader
 
@@ -34,7 +35,14 @@ export default function MarkdownTool() {
   const handleChange = (val: string) => {
     setMarkdown(val);
     send(val);
+    broadcastToolContent(val, 'markdown', 'Markdown Reader');
   };
+
+  // Broadcast initial content when tool mounts
+  useEffect(() => {
+    broadcastToolContent(markdown, 'markdown', 'Markdown Reader');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();

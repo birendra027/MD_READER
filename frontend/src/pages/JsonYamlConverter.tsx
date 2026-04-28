@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import * as yaml from 'js-yaml';
+import { broadcastToolContent } from '../hooks/useToolContent';
 
 type Mode = 'json-to-yaml' | 'yaml-to-json';
 
@@ -51,6 +52,12 @@ export default function JsonYamlConverter() {
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
+
+  // Broadcast current content to ChatBot
+  useEffect(() => {
+    const combined = input + (output ? `\n\n--- Output ---\n${output}` : '');
+    broadcastToolContent(combined, 'json-yaml', 'JSON ↔ YAML');
+  }, [input, output]);
 
   const inputLabel  = mode === 'json-to-yaml' ? 'JSON' : 'YAML';
   const outputLabel = mode === 'json-to-yaml' ? 'YAML' : 'JSON';

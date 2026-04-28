@@ -1,4 +1,5 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { broadcastToolContent } from '../hooks/useToolContent';
 
 interface ParquetData {
   columns: string[];
@@ -58,6 +59,18 @@ export default function ParquetReader() {
     setFileName('');
     if (fileRef.current) fileRef.current.value = '';
   };
+
+  // Broadcast schema + row preview to ChatBot when data changes
+  useEffect(() => {
+    if (!data) {
+      broadcastToolContent('', 'parquet-reader', 'Parquet Reader');
+      return;
+    }
+    const schema = data.schema.map(s => `  ${s.name}: ${s.type}`).join('\n');
+    const preview = JSON.stringify(data.rows.slice(0, 5), null, 2);
+    const summary = `File: ${fileName}\nTotal rows: ${data.numRows}\n\nSchema:\n${schema}\n\nFirst 5 rows:\n${preview}`;
+    broadcastToolContent(summary, 'parquet-reader', 'Parquet Reader');
+  }, [data, fileName]);
 
   return (
     <div className="tool-page tool-page--parquet">
