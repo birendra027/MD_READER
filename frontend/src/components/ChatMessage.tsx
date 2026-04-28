@@ -36,6 +36,11 @@ interface CodeBlockProps {
 
 const RUNNABLE = new Set(['python', 'py', 'shell', 'bash', 'sh', 'powershell', 'pwsh', 'cmd']);
 
+/** Strip the _locked suffix and return the base language name */
+function baseLang(lang: string): string {
+  return lang.endsWith('_locked') ? lang.slice(0, -7) : lang;
+}
+
 function CodeBlock({ lang, code }: CodeBlockProps) {
   const [currentCode, setCurrentCode] = useState(code);
   const [output, setOutput] = useState<string | null>(null);
@@ -48,7 +53,8 @@ function CodeBlock({ lang, code }: CodeBlockProps) {
   const [filesOpen, setFilesOpen] = useState(true);
   const outputRef = useRef<HTMLPreElement>(null);
 
-  const canRun = RUNNABLE.has(lang);
+  const isLocked = lang.endsWith('_locked');
+  const canRun = RUNNABLE.has(lang) && !isLocked;
 
   // Auto-scroll output to bottom while running
   useEffect(() => {
@@ -187,7 +193,7 @@ function CodeBlock({ lang, code }: CodeBlockProps) {
   return (
     <div className="code-block">
       <div className="code-block-header">
-        <span className="code-lang">{lang || 'code'}{wasFixed ? ' · 🔧 fixed' : ''}</span>
+        <span className="code-lang">{baseLang(lang) || 'code'}{isLocked ? ' 🔒' : ''}{wasFixed ? ' · 🔧 fixed' : ''}</span>
         <div className="code-block-actions">
           <button className="code-btn" onClick={copyCode} title="Copy code">
             {copied ? '✓ Copied' : '⎘ Copy'}
