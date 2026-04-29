@@ -31,7 +31,7 @@ pipeline {
         HELM_NAMESPACE           = 'md-reader'
         HELM_CHART               = './helm/md-reader'
 
-        REGISTRY_CREDENTIALS     = 'nexus-registry-credentials'
+        REGISTRY_CREDENTIALS     = 'admin'
         KUBECONFIG_CREDENTIAL_ID = 'kubeconfig-secret'
 
         // Branch to protect — matches both regular Pipeline (origin/dev_1.0)
