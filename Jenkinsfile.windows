@@ -79,22 +79,15 @@ pipeline {
                         call .ci-venv\\Scripts\\activate.bat
                         pip install --quiet pylint
                         pip install --quiet -r requirements.txt
-                        pylint ^
-                            --rcfile=../.pylintrc ^
-                            --output-format=text ^
-                            --fail-under=7.0 ^
-                            main.py ^
-                            s3_client.py ^
-                            md_converter.py ^
-                            parquet_handler.py ^
-                            ws_handler.py ^
-                            chatbot/
+                        pylint --rcfile=../.pylintrc --output-format=text --fail-under=7.0 main.py s3_client.py md_converter.py parquet_handler.py ws_handler.py chatbot/ > .pylint-report.txt 2>&1
+                        type .pylint-report.txt
+                        exit /b %ERRORLEVEL%
                     '''
                 }
             }
             post {
                 always {
-                    archiveArtifacts artifacts: 'backend\\.pylint-report.txt', allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'backend/.pylint-report.txt', allowEmptyArchive: true
                 }
             }
         }
@@ -155,7 +148,7 @@ pipeline {
                 script {
                     withCredentials([
                         usernamePassword(
-                            credentialsId: env.REGISTRY_CREDENTIALS,
+                            credentialsId: REGISTRY_CREDENTIALS,
                             usernameVariable: 'REG_USER',
                             passwordVariable: 'REG_PASS'
                         )
@@ -190,7 +183,7 @@ pipeline {
             }
             steps {
                 withCredentials([
-                    file(credentialsId: env.KUBECONFIG_CREDENTIAL_ID, variable: 'KUBECONFIG')
+                    file(credentialsId: KUBECONFIG_CREDENTIAL_ID, variable: 'KUBECONFIG')
                 ]) {
                     bat """
                         helm upgrade %HELM_RELEASE% %HELM_CHART% ^
@@ -219,7 +212,7 @@ pipeline {
             }
             steps {
                 withCredentials([
-                    file(credentialsId: env.KUBECONFIG_CREDENTIAL_ID, variable: 'KUBECONFIG')
+                    file(credentialsId: KUBECONFIG_CREDENTIAL_ID, variable: 'KUBECONFIG')
                 ]) {
                     bat """
                         kubectl rollout status deployment/%HELM_RELEASE%-backend -n %HELM_NAMESPACE% --timeout=3m
