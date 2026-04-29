@@ -1,0 +1,38 @@
+[MASTER]
+# Use multiple CPU cores for faster linting
+jobs=0
+# Ignore auto-generated/third-party sub-directories
+ignore=venv,.venv,.ci-venv,sandbox_venv,__pycache__,memory,output
+
+[MESSAGES CONTROL]
+# Disable noisy rules that don't apply to this project
+disable=
+    C0114,   # missing-module-docstring
+    C0115,   # missing-class-docstring
+    C0116,   # missing-function-docstring
+    R0903,   # too-few-public-methods
+    W0511,   # fixme / todo
+    W1514,   # unspecified-encoding  (Python 3.11 default is utf-8)
+    E0401,   # import-error  (runtime deps not installed in CI venv)
+
+[FORMAT]
+max-line-length=120
+indent-string='    '
+
+[DESIGN]
+max-args=10
+max-locals=20
+max-returns=6
+max-branches=15
+
+[SIMILARITIES]
+min-similarity-lines=8
+ignore-imports=yes
+
+[BASIC]
+# Allow short variable names common in data-processing code
+good-names=i,j,k,e,f,m,v,db,ok,id,df,s3
+
+[REPORTS]
+output-format=text
+score=yes
