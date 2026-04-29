@@ -201,8 +201,9 @@ def list_session_files(session_id: str) -> list[dict]:
 def presigned_url(key: str, expires_in: int = 3600) -> str:
     """Generate a pre-signed GET URL valid for *expires_in* seconds.
 
-    For LocalStack in a Docker network the URL will be an internal hostname.
-    We rewrite it to the host-facing ``localhost:4566`` so browsers can reach it.
+    NOTE: This URL points to the S3/LocalStack endpoint directly and is only
+    safe to use for server-side requests. Do NOT send these URLs to browsers;
+    use the backend proxy endpoint (/chat/files/…) instead.
     """
     if not is_available():
         return ""
@@ -212,21 +213,39 @@ def presigned_url(key: str, expires_in: int = 3600) -> str:
             Params={"Bucket": _BUCKET, "Key": key},
             ExpiresIn=expires_in,
         )
-        # Rewrite internal container hostname → localhost so the browser works
-        if _ENDPOINT:
-            from urllib.parse import urlparse, urlunparse
-            parsed = urlparse(url)
-            # _ENDPOINT is e.g. http://localstack:4566 — replace that host/port
-            # with localhost so requests from the user's browser work.
-            ep = urlparse(_ENDPOINT)
-            rewritten = parsed._replace(netloc=f"localhost:{ep.port or 4566}")
-            url = urlunparse(rewritten)
         return url
     except Exception as exc:
         if _maybe_disable(exc, "GeneratePresignedUrl"):
             return ""
         logger.exception("S3 presigned_url failed: key=%s", key)
         return ""
+
+
+def download_fileobj(key: str) -> tuple[bytes, str] | None:
+    """Download the object at *key* and return (content_bytes, content_type).
+
+    Returns None if S3 is unavailable or the object does not exist.
+    """
+    if not is_available():
+        return None
+    try:
+        resp = _client().get_object(Bucket=_BUCKET, Key=key)
+        content_type: str = resp.get("ContentType", "application/octet-stream")
+        data: bytes = resp["Body"].read()
+        return data, content_type
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code in ("404", "NoSuchKey"):
+            return None
+        if _maybe_disable(exc, "GetObject"):
+            return None
+        logger.exception("S3 download_fileobj failed: key=%s", key)
+        return None
+    except Exception as exc:
+        if _maybe_disable(exc, "GetObject"):
+            return None
+        logger.exception("S3 download_fileobj failed: key=%s", key)
+        return None
 
 
 def delete_session(session_id: str) -> int:

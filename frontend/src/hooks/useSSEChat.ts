@@ -19,6 +19,24 @@ export interface ChatMeta {
 const SESSION_KEY = 'md_reader_session_id';
 
 /**
+ * UUID v4 generator that works in both secure (HTTPS) and non-secure (HTTP)
+ * contexts. Falls back to crypto.getRandomValues() when randomUUID() is
+ * unavailable (HTTP pages are not "secure contexts").
+ */
+function uuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    try { return crypto.randomUUID(); } catch { /* fall through */ }
+  }
+  // Fallback: RFC-4122 v4 using getRandomValues (works on HTTP)
+  const buf = new Uint8Array(16);
+  crypto.getRandomValues(buf);
+  buf[6] = (buf[6] & 0x0f) | 0x40;
+  buf[8] = (buf[8] & 0x3f) | 0x80;
+  const h = Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
+}
+
+/**
  * Decode the escaped text from the backend SSE _sse_data() helper.
  * The backend escapes: \ → \\ and \n → \n (two chars: backslash + n).
  * This decoder reverses that in a single pass.
@@ -52,6 +70,8 @@ export function useSSEChat() {
     localStorage.getItem(SESSION_KEY)
   );
   const abortRef = useRef<AbortController | null>(null);
+  // Tracks the active send so stale finally-blocks don't clobber newer state
+  const activeSendRef = useRef<string | null>(null);
 
   // ── Restore chat history on mount if we have a saved session ──
   useEffect(() => {
@@ -109,16 +129,27 @@ export function useSSEChat() {
   }, []);
 
   const sendMessage = useCallback(async (userText: string, document: string) => {
-    if (!userText.trim() || isLoading) return;
+    if (!userText.trim()) return;
 
-    const userMsg: Message = { id: crypto.randomUUID(), role: 'user', content: userText };
-    const assistantId = crypto.randomUUID();
+    // Abort any in-progress stream and finalize its streaming message so the
+    // UI doesn't show a dangling spinner while the new request loads.
+    if (abortRef.current) {
+      abortRef.current.abort();
+      setMessages(prev =>
+        prev.map(m => m.isStreaming ? { ...m, isStreaming: false, stage: undefined } : m)
+      );
+    }
+
+    const sendId = uuid();
+    activeSendRef.current = sendId;
+
+    const userMsg: Message = { id: uuid(), role: 'user', content: userText };
+    const assistantId = uuid();
     const assistantMsg: Message = { id: assistantId, role: 'assistant', content: '', isStreaming: true };
 
     setMessages(prev => [...prev, userMsg, assistantMsg]);
     setIsLoading(true);
 
-    abortRef.current?.abort();
     abortRef.current = new AbortController();
 
     try {
@@ -202,7 +233,7 @@ export function useSSEChat() {
         }
       }
     } catch (e: unknown) {
-      if ((e as Error).name !== 'AbortError') {
+      if ((e as Error).name !== 'AbortError' && activeSendRef.current === sendId) {
         setMessages(prev =>
           prev.map(m =>
             m.id === assistantId
@@ -212,12 +243,14 @@ export function useSSEChat() {
         );
       }
     } finally {
-      setMessages(prev =>
-        prev.map(m => m.id === assistantId ? { ...m, isStreaming: false, stage: undefined } : m)
-      );
-      setIsLoading(false);
+      if (activeSendRef.current === sendId) {
+        setMessages(prev =>
+          prev.map(m => m.id === assistantId ? { ...m, isStreaming: false, stage: undefined } : m)
+        );
+        setIsLoading(false);
+      }
     }
-  }, [isLoading]);
+  }, []);
 
   const clearChat = useCallback(() => {
     setMessages([]);

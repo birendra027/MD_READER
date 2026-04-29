@@ -146,7 +146,7 @@ export function ChatBot({ document: docContent, isMinimized, onMinimize, onResto
 
   const handleSend = () => {
     const text = input.trim();
-    if (!text || isLoading) return;
+    if (!text) return;
     setInput('');
     sendMessage(text, docContent);
   };
@@ -283,10 +283,10 @@ export function ChatBot({ document: docContent, isMinimized, onMinimize, onResto
         />
         <button
           className="send-btn"
-          onClick={isLoading ? stopStreaming : handleSend}
-          title={isLoading ? 'Stop generation' : 'Send message'}
+          onClick={isLoading && !input.trim() ? stopStreaming : handleSend}
+          title={isLoading && !input.trim() ? 'Stop generation' : 'Send message'}
         >
-          {isLoading ? '■ Stop' : '↑ Send'}
+          {isLoading && !input.trim() ? '■ Stop' : '↑ Send'}
         </button>
       </div>
     </div>

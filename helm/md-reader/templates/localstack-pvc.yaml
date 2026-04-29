@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "md-reader.fullname" . }}-localstack-data
+  labels:
+    {{- include "md-reader.labels" . | nindent 4 }}
+    app.kubernetes.io/component: localstack
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.localstack.persistence.storageClass }}
+  storageClassName: {{ .Values.localstack.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.localstack.persistence.size | quote }}

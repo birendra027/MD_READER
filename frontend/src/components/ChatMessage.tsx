@@ -22,8 +22,26 @@ function sanitizeVisibleText(text: string): string {
     .replace(/After execution, report which files were created so the user knows where to find them\.?/gi, `After execution, point the user to the ${GENERATED_FILES_LABEL}.`);
 }
 
+/**
+ * Strip model-generated chat-template tokens that must never be shown:
+ *  - <think>…</think> reasoning blocks (DeepSeek-R1, Qwen-QwQ, Gemma thinking…)
+ *  - Orphaned / incomplete <think> tags (e.g. still streaming before </think> arrives)
+ *  - Gemma turn markers: <start_of_turn>user, <end_of_turn>
+ *  - ChatML markers: <|im_start|>user, <|im_end|>
+ *  - Generic <turn|> / <|turn> / <|turn>user variants seen from Ollama
+ */
+function stripModelArtifacts(content: string): string {
+  return content
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<\/?think>/gi, '')
+    .replace(/<(?:start_of_turn|end_of_turn)>(?:user|assistant|model|system)?/gi, '')
+    .replace(/<\|(?:im_start|im_end)\|>(?:user|assistant|system|model)?/gi, '')
+    .replace(/<\|?turn\|?>(?:user|assistant|system|model)?/gi, '');
+}
+
 function sanitizeMarkdownOutsideCode(content: string): string {
-  const segments = content.split(/(```[\s\S]*?```)/g);
+  const cleaned = stripModelArtifacts(content);
+  const segments = cleaned.split(/(```[\s\S]*?```)/g);
   return segments
     .map(segment => segment.startsWith('```') ? segment : sanitizeVisibleText(segment))
     .join('');

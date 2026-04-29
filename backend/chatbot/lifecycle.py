@@ -114,6 +114,8 @@ async def run_turn(request: ChatRequest) -> AsyncGenerator[str, None]:
         full_reply = error_msg
 
     # — 7. Persist assistant turn
+    # Strip model chat-template artifacts before saving so history stays clean.
+    full_reply = _strip_model_artifacts(full_reply)
     await session.append_turn(session_id, "assistant", full_reply)
     stages_used.append("session_persist")
 
@@ -159,6 +161,28 @@ async def _handle_client_command(
 
 
 # — SSE formatting helpers
+
+import re as _re
+
+_ARTIFACT_PATTERNS = [
+    # <think>…</think> reasoning blocks (DeepSeek-R1, Qwen-QwQ, Gemma thinking…)
+    _re.compile(r'<think>[\s\S]*?</think>', _re.IGNORECASE),
+    # Orphaned / incomplete <think> tags
+    _re.compile(r'</?think>', _re.IGNORECASE),
+    # Gemma turn markers: <start_of_turn>user, <end_of_turn>
+    _re.compile(r'<(?:start_of_turn|end_of_turn)>(?:user|assistant|model|system)?', _re.IGNORECASE),
+    # ChatML markers: <|im_start|>user, <|im_end|>
+    _re.compile(r'<\|(?:im_start|im_end)\|>(?:user|assistant|system|model)?', _re.IGNORECASE),
+    # Generic <turn|> / <|turn> / <|turn>user variants
+    _re.compile(r'<\|?turn\|?>(?:user|assistant|system|model)?', _re.IGNORECASE),
+]
+
+
+def _strip_model_artifacts(text: str) -> str:
+    """Remove chat-template tokens and reasoning blocks from model output."""
+    for pat in _ARTIFACT_PATTERNS:
+        text = pat.sub('', text)
+    return text.strip()
 
 def _sse_data(text: str) -> str:
     """Standard SSE data line.

@@ -1,0 +1,128 @@
+# ── Global ─────────────────────────────────────────────────────────────────
+global:
+  # Prefix prepended to every image repository when set.
+  # Example for Nexus:  nexus.example.com:8082/repository/docker
+  imageRegistry: ""
+  imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ── LocalStack (S3 emulator) ────────────────────────────────────────────────
+localstack:
+  image:
+    # Pinned to Docker Hub so the global Nexus registry is never applied.
+    registry: "docker.io"
+    repository: localstack/localstack
+    tag: "3"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 4566
+  persistence:
+    size: 5Gi
+    storageClass: ""
+  resources: {}
+  #  limits:
+  #    cpu: 500m
+  #    memory: 512Mi
+  #  requests:
+  #    cpu: 100m
+  #    memory: 256Mi
+
+# ── Ollama LLM Server ───────────────────────────────────────────────────────
+ollama:
+  image:
+    # Pinned to Docker Hub so the global Nexus registry is never applied.
+    registry: "docker.io"
+    repository: ollama/ollama
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 11434
+  persistence:
+    size: 30Gi
+    storageClass: ""
+  # Model to serve (must match backend.env.openaiModel)
+  model: "gemma4:31b-cloud"
+  resources: {}
+  #  requests:
+  #    cpu: "2"
+  #    memory: 8Gi
+  #  limits:
+  #    cpu: "4"
+  #    memory: 16Gi
+  # Uncomment to add NVIDIA GPU resource limit:
+  # gpuResources:
+  #   limits:
+  #     nvidia.com/gpu: "1"
+
+# ── Ollama Init Job (pulls the model into the PVC) ─────────────────────────
+ollamaInit:
+  enabled: true
+
+# ── FastAPI Backend ─────────────────────────────────────────────────────────
+backend:
+  image:
+    # Replace with your Nexus registry path, e.g.:
+    #   registry: nexus.example.com:8082
+    #   repository: repository/docker/md-reader-backend
+    registry: ""
+    repository: md-reader-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8000
+  persistence:
+    memory:
+      size: 2Gi
+      storageClass: ""
+    output:
+      size: 2Gi
+      storageClass: ""
+  env:
+    openaiModel: "gemma4:31b-cloud"
+    awsDefaultRegion: "us-east-1"
+    s3Bucket: "md-reader-sessions"
+  # Sensitive values stored in a Kubernetes Secret
+  secrets:
+    openaiApiKey: "ollama"
+    awsAccessKeyId: "test"
+    awsSecretAccessKey: "test"
+  resources: {}
+
+# ── React / Nginx Frontend ──────────────────────────────────────────────────
+frontend:
+  image:
+    # Replace with your Nexus registry path, e.g.:
+    #   registry: nexus.example.com:8082
+    #   repository: repository/docker/md-reader-frontend
+    registry: ""
+    repository: md-reader-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 80
+  resources: {}
+
+# ── Ingress ─────────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations: {}
+  #  cert-manager.io/cluster-issuer: letsencrypt-prod
+  #  nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+  hosts:
+    - host: md-reader.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # - secretName: md-reader-tls
+  #   hosts:
+  #     - md-reader.local

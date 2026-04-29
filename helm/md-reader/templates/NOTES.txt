@@ -1,0 +1,55 @@
+MD Reader has been deployed!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Release : {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FRONTEND ACCESS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+
+Make sure the hostname(s) above resolve to your Ingress
+controller's external IP. For local testing, add an entry
+to /etc/hosts:
+  <ingress-controller-IP>   {{ (index .Values.ingress.hosts 0).host }}
+{{- else }}
+  kubectl port-forward svc/{{ include "md-reader.frontend.serviceName" . }} \
+    8080:{{ .Values.frontend.service.port }} \
+    -n {{ .Release.Namespace }}
+  Then open http://localhost:8080
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OLLAMA MODEL PULL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if .Values.ollamaInit.enabled }}
+A one-off Job is pulling {{ .Values.ollama.model }}.
+Track it with:
+  kubectl logs -f job/{{ include "md-reader.fullname" . }}-ollama-init \
+    -n {{ .Release.Namespace }}
+{{- else }}
+ollamaInit is disabled. Pull the model manually:
+  kubectl exec -it deploy/{{ include "md-reader.fullname" . }}-ollama \
+    -n {{ .Release.Namespace }} -- ollama pull {{ .Values.ollama.model }}
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+USEFUL COMMANDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Check all pods:
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Stream backend logs:
+  kubectl logs -f deploy/{{ include "md-reader.fullname" . }}-backend \
+    -n {{ .Release.Namespace }}
+
+Upgrade with new image tag:
+  helm upgrade {{ .Release.Name }} ./helm/md-reader \
+    --set backend.image.tag=<new-tag> \
+    --set frontend.image.tag=<new-tag> \
+    -n {{ .Release.Namespace }}

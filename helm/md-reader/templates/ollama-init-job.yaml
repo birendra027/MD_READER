@@ -1,0 +1,54 @@
+{{- if .Values.ollamaInit.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "md-reader.fullname" . }}-ollama-init
+  labels:
+    {{- include "md-reader.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama-init
+  annotations:
+    # Run after install and upgrade; clean up the previous run automatically.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  # The model pull can take a long time on first run (large model file).
+  activeDeadlineSeconds: 7200
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "md-reader.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ollama-init
+    spec:
+      {{- include "md-reader.imagePullSecrets" . | nindent 6 }}
+      restartPolicy: OnFailure
+      # Wait until the Ollama API is responsive before pulling.
+      initContainers:
+        - name: wait-for-ollama
+          image: curlimages/curl:8.7.1
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Ollama to become ready..."
+              until curl -sf http://{{ include "md-reader.ollama.serviceName" . }}:{{ .Values.ollama.service.port }}/api/tags; do
+                echo "  Not ready – retrying in 10 s"
+                sleep 10
+              done
+              echo "Ollama is ready."
+      containers:
+        - name: model-pull
+          image: {{ include "md-reader.image" (dict "imageValues" .Values.ollama.image "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.ollama.image.pullPolicy }}
+          env:
+            - name: OLLAMA_HOST
+              value: "http://{{ include "md-reader.ollama.serviceName" . }}:{{ .Values.ollama.service.port }}"
+          command:
+            - sh
+            - -c
+            - |
+              echo "Pulling model {{ .Values.ollama.model }} ..."
+              ollama pull {{ .Values.ollama.model }}
+              echo "Model pull complete."
+{{- end }}

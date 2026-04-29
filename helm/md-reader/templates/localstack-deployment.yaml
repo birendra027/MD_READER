@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "md-reader.fullname" . }}-localstack
+  labels:
+    {{- include "md-reader.labels" . | nindent 4 }}
+    app.kubernetes.io/component: localstack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "md-reader.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: localstack
+  template:
+    metadata:
+      labels:
+        {{- include "md-reader.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: localstack
+    spec:
+      {{- include "md-reader.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: localstack
+          image: {{ include "md-reader.image" (dict "imageValues" .Values.localstack.image "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.localstack.image.pullPolicy }}
+          env:
+            - name: SERVICES
+              value: "s3"
+            - name: DEFAULT_REGION
+              value: {{ .Values.backend.env.awsDefaultRegion | quote }}
+            - name: LOCALSTACK_HOST
+              value: {{ include "md-reader.localstack.serviceName" . | quote }}
+          ports:
+            - name: http
+              containerPort: 4566
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /_localstack/health
+              port: 4566
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 20
+          livenessProbe:
+            httpGet:
+              path: /_localstack/health
+              port: 4566
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          volumeMounts:
+            - name: localstack-data
+              mountPath: /var/lib/localstack
+          {{- with .Values.localstack.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: localstack-data
+          persistentVolumeClaim:
+            claimName: {{ include "md-reader.fullname" . }}-localstack-data

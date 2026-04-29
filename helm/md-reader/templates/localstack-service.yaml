@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "md-reader.localstack.serviceName" . }}
+  labels:
+    {{- include "md-reader.labels" . | nindent 4 }}
+    app.kubernetes.io/component: localstack
+spec:
+  type: {{ .Values.localstack.service.type }}
+  selector:
+    {{- include "md-reader.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: localstack
+  ports:
+    - name: http
+      port: {{ .Values.localstack.service.port }}
+      targetPort: 4566
+      protocol: TCP

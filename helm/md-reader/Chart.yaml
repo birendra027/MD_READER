@@ -1,0 +1,18 @@
+apiVersion: v2
+name: md-reader
+description: >
+  MD Reader – FastAPI backend, React/Nginx frontend, Ollama LLM server,
+  and LocalStack S3 emulator, packaged as a single Helm chart.
+  File downloads are proxied through the backend (/chat/files/…) so
+  LocalStack is never exposed directly to browsers.
+type: application
+version: 0.2.0
+appVersion: "1.1.0"
+keywords:
+  - markdown
+  - llm
+  - ollama
+  - fastapi
+  - react
+maintainers:
+  - name: MD Reader Team

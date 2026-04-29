@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "md-reader.fullname" . }}-backend
+  labels:
+    {{- include "md-reader.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: {{ .Values.backend.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "md-reader.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "md-reader.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+    spec:
+      {{- include "md-reader.imagePullSecrets" . | nindent 6 }}
+      # Wait for LocalStack and Ollama before starting the FastAPI process.
+      initContainers:
+        - name: wait-for-localstack
+          image: curlimages/curl:8.7.1
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for LocalStack S3..."
+              until curl -sf "http://{{ include "md-reader.localstack.serviceName" . }}:{{ .Values.localstack.service.port }}/_localstack/health" \
+                | grep -q '"s3"'; do
+                echo "  Not ready – retrying in 5 s"
+                sleep 5
+              done
+              echo "LocalStack is ready."
+        - name: wait-for-ollama
+          image: curlimages/curl:8.7.1
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Ollama..."
+              until curl -sf "http://{{ include "md-reader.ollama.serviceName" . }}:{{ .Values.ollama.service.port }}/api/tags"; do
+                echo "  Not ready – retrying in 10 s"
+                sleep 10
+              done
+              echo "Ollama is ready."
+      containers:
+        - name: backend
+          image: {{ include "md-reader.image" (dict "imageValues" .Values.backend.image "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            # ── LLM ──────────────────────────────────────────────────────────
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "md-reader.fullname" . }}-secret
+                  key: OPENAI_API_KEY
+            - name: OPENAI_BASE_URL
+              value: "http://{{ include "md-reader.ollama.serviceName" . }}:{{ .Values.ollama.service.port }}/v1"
+            - name: OPENAI_MODEL
+              value: {{ .Values.backend.env.openaiModel | quote }}
+            # ── AWS / LocalStack S3 ───────────────────────────────────────────
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "md-reader.fullname" . }}-secret
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "md-reader.fullname" . }}-secret
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_DEFAULT_REGION
+              value: {{ .Values.backend.env.awsDefaultRegion | quote }}
+            - name: S3_ENDPOINT_URL
+              value: "http://{{ include "md-reader.localstack.serviceName" . }}:{{ .Values.localstack.service.port }}"
+            - name: S3_BUCKET
+              value: {{ .Values.backend.env.s3Bucket | quote }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 4
+          volumeMounts:
+            - name: backend-memory
+              mountPath: /app/backend/memory
+            - name: backend-output
+              mountPath: /app/backend/output
+          {{- with .Values.backend.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: backend-memory
+          persistentVolumeClaim:
+            claimName: {{ include "md-reader.fullname" . }}-backend-memory
+        - name: backend-output
+          persistentVolumeClaim:
+            claimName: {{ include "md-reader.fullname" . }}-backend-output
