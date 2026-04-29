@@ -1,0 +1,251 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// MD Reader — CI/CD Pipeline  (Linux Agent)
+//
+// All shell steps use `sh`. Requires bash, python3, node/npm, docker,
+// kubectl, and helm on the agent PATH.
+// Branch filter uses GIT_BRANCH (works for both regular Pipeline and
+// Multibranch Pipeline jobs).
+// ─────────────────────────────────────────────────────────────────────────────
+
+pipeline {
+    agent any
+
+    // ── Stage selection checkboxes ────────────────────────────────────────────
+    parameters {
+        booleanParam(name: 'RUN_BACKEND_LINT',  defaultValue: true,  description: 'Run pylint on backend Python sources')
+        booleanParam(name: 'RUN_FRONTEND_CI',   defaultValue: true,  description: 'Run TypeScript type-check and production build')
+        booleanParam(name: 'RUN_BUILD_IMAGES',  defaultValue: true,  description: 'Build backend and frontend Docker images')
+        booleanParam(name: 'RUN_PUSH_IMAGES',   defaultValue: true,  description: 'Push images to the private registry')
+        booleanParam(name: 'RUN_DEPLOY',        defaultValue: true,  description: 'Deploy to Kubernetes via Helm upgrade')
+        booleanParam(name: 'RUN_VERIFY',        defaultValue: true,  description: 'Wait for Kubernetes rollout to complete')
+    }
+
+    // ── Global environment ────────────────────────────────────────────────────
+    environment {
+        REGISTRY                 = 'host.docker.internal:9001'
+        BACKEND_IMAGE            = "${REGISTRY}/md-reader-backend"
+        FRONTEND_IMAGE           = "${REGISTRY}/md-reader-frontend"
+        IMAGE_TAG                = "${env.BUILD_NUMBER}"
+
+        HELM_RELEASE             = 'md-reader'
+        HELM_NAMESPACE           = 'md-reader'
+        HELM_CHART               = './helm/md-reader'
+
+        REGISTRY_CREDENTIALS     = 'nexus-registry-credentials'
+        KUBECONFIG_CREDENTIAL_ID = 'kubeconfig-secret'
+
+        // Branch to protect — matches both regular Pipeline (origin/dev_1.0)
+        // and Multibranch Pipeline (dev_1.0)
+        TARGET_BRANCH            = 'dev_1.0'
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
+    stages {
+
+        // ── 1. Checkout ───────────────────────────────────────────────────────
+        stage('Checkout') {
+            when {
+                expression {
+                    return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                           env.BRANCH_NAME == TARGET_BRANCH
+                }
+            }
+            steps {
+                checkout scm
+                echo "Branch: ${env.GIT_BRANCH}  Commit: ${env.GIT_COMMIT}"
+            }
+        }
+
+        // ── 2. Backend Lint ───────────────────────────────────────────────────
+        stage('Backend Lint') {
+            when {
+                allOf {
+                    expression {
+                        return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                               env.BRANCH_NAME == TARGET_BRANCH
+                    }
+                    expression { return params.RUN_BACKEND_LINT }
+                }
+            }
+            steps {
+                dir('backend') {
+                    sh '''
+                        python3 -m venv .ci-venv
+                        . .ci-venv/bin/activate
+                        pip install --quiet pylint
+                        pip install --quiet -r requirements.txt
+                        pylint \
+                            --rcfile=../.pylintrc \
+                            --output-format=text \
+                            --fail-under=7.0 \
+                            main.py \
+                            s3_client.py \
+                            md_converter.py \
+                            parquet_handler.py \
+                            ws_handler.py \
+                            chatbot/
+                    '''
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'backend/.pylint-report.txt', allowEmptyArchive: true
+                }
+            }
+        }
+
+        // ── 3. Frontend CI ────────────────────────────────────────────────────
+        stage('Frontend CI') {
+            when {
+                allOf {
+                    expression {
+                        return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                               env.BRANCH_NAME == TARGET_BRANCH
+                    }
+                    expression { return params.RUN_FRONTEND_CI }
+                }
+            }
+            steps {
+                dir('frontend') {
+                    sh '''
+                        npm ci --prefer-offline
+                        npx tsc --noEmit
+                        npm run build
+                    '''
+                }
+            }
+        }
+
+        // ── 4. Build Docker Images ────────────────────────────────────────────
+        stage('Build Images') {
+            when {
+                allOf {
+                    expression {
+                        return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                               env.BRANCH_NAME == TARGET_BRANCH
+                    }
+                    expression { return params.RUN_BUILD_IMAGES }
+                }
+            }
+            steps {
+                sh """
+                    docker build -f backend/Dockerfile -t ${BACKEND_IMAGE}:${IMAGE_TAG} -t ${BACKEND_IMAGE}:latest .
+                    docker build -f frontend/Dockerfile -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -t ${FRONTEND_IMAGE}:latest ./frontend
+                """
+            }
+        }
+
+        // ── 5. Push Images ────────────────────────────────────────────────────
+        stage('Push Images') {
+            when {
+                allOf {
+                    expression {
+                        return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                               env.BRANCH_NAME == TARGET_BRANCH
+                    }
+                    expression { return params.RUN_PUSH_IMAGES }
+                }
+            }
+            steps {
+                script {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: env.REGISTRY_CREDENTIALS,
+                            usernameVariable: 'REG_USER',
+                            passwordVariable: 'REG_PASS'
+                        )
+                    ]) {
+                        sh """
+                            echo "\${REG_PASS}" | docker login ${REGISTRY} -u "\${REG_USER}" --password-stdin
+                            docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                            docker push ${BACKEND_IMAGE}:latest
+                            docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                            docker push ${FRONTEND_IMAGE}:latest
+                        """
+                    }
+                }
+            }
+            post {
+                always {
+                    sh "docker logout ${REGISTRY} || true"
+                }
+            }
+        }
+
+        // ── 6. Deploy via Helm ────────────────────────────────────────────────
+        stage('Deploy') {
+            when {
+                allOf {
+                    expression {
+                        return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                               env.BRANCH_NAME == TARGET_BRANCH
+                    }
+                    expression { return params.RUN_DEPLOY }
+                }
+            }
+            steps {
+                withCredentials([
+                    file(credentialsId: env.KUBECONFIG_CREDENTIAL_ID, variable: 'KUBECONFIG')
+                ]) {
+                    sh """
+                        helm upgrade ${HELM_RELEASE} ${HELM_CHART} \
+                            --namespace  ${HELM_NAMESPACE} \
+                            --reuse-values \
+                            --set backend.image.tag=${IMAGE_TAG} \
+                            --set frontend.image.tag=${IMAGE_TAG} \
+                            --atomic \
+                            --timeout 5m \
+                            --cleanup-on-fail
+                    """
+                }
+            }
+        }
+
+        // ── 7. Verify Rollout ─────────────────────────────────────────────────
+        stage('Verify') {
+            when {
+                allOf {
+                    expression {
+                        return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                               env.BRANCH_NAME == TARGET_BRANCH
+                    }
+                    expression { return params.RUN_VERIFY }
+                }
+            }
+            steps {
+                withCredentials([
+                    file(credentialsId: env.KUBECONFIG_CREDENTIAL_ID, variable: 'KUBECONFIG')
+                ]) {
+                    sh """
+                        kubectl rollout status deployment/${HELM_RELEASE}-backend  -n ${HELM_NAMESPACE} --timeout=3m
+                        kubectl rollout status deployment/${HELM_RELEASE}-frontend -n ${HELM_NAMESPACE} --timeout=3m
+                    """
+                }
+            }
+        }
+    }
+
+    // ── Post-pipeline ─────────────────────────────────────────────────────────
+    post {
+        success {
+            echo "Pipeline succeeded — ${BACKEND_IMAGE}:${IMAGE_TAG} and ${FRONTEND_IMAGE}:${IMAGE_TAG} are live."
+        }
+        failure {
+            echo "Pipeline FAILED on branch ${env.GIT_BRANCH} at commit ${env.GIT_COMMIT}."
+        }
+        cleanup {
+            sh """
+                docker rmi ${BACKEND_IMAGE}:${IMAGE_TAG}  || true
+                docker rmi ${BACKEND_IMAGE}:latest         || true
+                docker rmi ${FRONTEND_IMAGE}:${IMAGE_TAG} || true
+                docker rmi ${FRONTEND_IMAGE}:latest        || true
+            """
+        }
+    }
+}
