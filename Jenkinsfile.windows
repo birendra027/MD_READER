@@ -189,8 +189,8 @@ pipeline {
                         helm upgrade %HELM_RELEASE% %HELM_CHART% ^
                             --namespace %HELM_NAMESPACE% ^
                             --reuse-values ^
-                            --set backend.image.tag=%IMAGE_TAG% ^
-                            --set frontend.image.tag=%IMAGE_TAG% ^
+                            --set "backend.image.tag=%IMAGE_TAG%" ^
+                            --set "frontend.image.tag=%IMAGE_TAG%" ^
                             --atomic ^
                             --timeout 5m ^
                             --cleanup-on-fail
