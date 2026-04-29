@@ -46,7 +46,7 @@ pipeline {
         HELM_CHART             = './helm/md-reader'
 
         // Jenkins credential IDs
-        REGISTRY_CREDENTIALS   = 'admin'   // Docker registry creds
+        REGISTRY_CREDENTIALS   = 'nexus-registry-credentials'   // Docker registry creds
         KUBECONFIG_CREDENTIAL_ID = 'kubeconfig-secret'           // kubeconfig file secret
     }
 
