@@ -36,6 +36,16 @@ pipeline {
         // Branch to protect — matches both regular Pipeline (origin/dev_1.0)
         // and Multibranch Pipeline (dev_1.0)
         TARGET_BRANCH            = 'dev_1.0'
+
+        // ── Explicit tool paths — ensures all tools are found regardless of
+        //    how the Jenkins service was started or what system PATH contains.
+        PATH = "C:\\Program Files\\Git\\bin;C:\\Program Files\\Git\\cmd;" +
+               "C:\\Users\\BIRENDRA NATH MONDAL\\AppData\\Local\\Programs\\Python\\Python310;" +
+               "C:\\Users\\BIRENDRA NATH MONDAL\\AppData\\Local\\Programs\\Python\\Python310\\Scripts;" +
+               "C:\\Program Files\\nodejs;" +
+               "C:\\Program Files\\Docker\\Docker\\resources\\bin;" +
+               "C:\\Users\\BIRENDRA NATH MONDAL\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Helm.Helm_Microsoft.Winget.Source_8wekyb3d8bbwe\\windows-amd64;" +
+               "${env.PATH}"
     }
 
     options {
