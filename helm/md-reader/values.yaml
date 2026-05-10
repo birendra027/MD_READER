@@ -65,10 +65,8 @@ ollamaInit:
 # ── FastAPI Backend ─────────────────────────────────────────────────────────
 backend:
   image:
-    # Replace with your Nexus registry path, e.g.:
-    #   registry: nexus.example.com:8082
-    #   repository: repository/docker/md-reader-backend
-    registry: ""
+    # Nexus Docker hosted registry (must be reachable from GKE nodes)
+    registry: "YOUR_NEXUS_HOST:9001"
     repository: md-reader-backend
     tag: latest
     pullPolicy: IfNotPresent
@@ -97,10 +95,8 @@ backend:
 # ── React / Nginx Frontend ──────────────────────────────────────────────────
 frontend:
   image:
-    # Replace with your Nexus registry path, e.g.:
-    #   registry: nexus.example.com:8082
-    #   repository: repository/docker/md-reader-frontend
-    registry: ""
+    # Nexus Docker hosted registry (must be reachable from GKE nodes)
+    registry: "YOUR_NEXUS_HOST:9001"
     repository: md-reader-frontend
     tag: latest
     pullPolicy: IfNotPresent

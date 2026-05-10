@@ -35,7 +35,8 @@ pipeline {
     // ── Global environment ────────────────────────────────────────────────────
     environment {
         // Docker registry — must match the registry used in helm/md-reader/values.yaml
-        REGISTRY               = 'host.docker.internal:9001'
+        // Replace with the externally reachable Nexus URL (e.g. http://nexus.yourdomain.com:9001)
+        REGISTRY               = 'YOUR_NEXUS_HOST:9001'
         BACKEND_IMAGE          = "${REGISTRY}/md-reader-backend"
         FRONTEND_IMAGE         = "${REGISTRY}/md-reader-frontend"
         IMAGE_TAG              = "${env.BUILD_NUMBER}"          // Jenkins build number used as image tag
