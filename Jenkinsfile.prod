@@ -1,0 +1,275 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// MD Reader – CI/CD Pipeline  (Production – Azure AKS Deployment)
+//
+// All shell steps use `bat` – no `sh` calls.
+// Builds images locally, pushes to Nexus registry, deploys to AKS via Helm.
+//
+// Jenkins credentials required:
+//   nexus-registry-credentials  – Username/password for Nexus Docker registry
+//   kubeconfig-aks               – Secret file: AKS kubeconfig
+//                                  (from: az aks get-credentials …)
+//
+// Before first run update helm/values-aks.yaml with the current VM public IP.
+// ─────────────────────────────────────────────────────────────────────────────
+
+pipeline {
+    agent any
+
+    // ── Stage selection checkboxes ─────────────────────────────────────────────
+    parameters {
+        string(name: 'PUBLIC_IP', defaultValue: '', description: 'Public IP of the Nexus registry host (e.g. 20.219.109.5) — overrides registry in values-aks.yaml')
+        booleanParam(name: 'RUN_BACKEND_LINT',  defaultValue: true,  description: 'Run pylint on backend Python sources')
+        booleanParam(name: 'RUN_FRONTEND_CI',   defaultValue: true,  description: 'Run TypeScript type-check and production build')
+        booleanParam(name: 'RUN_BUILD_IMAGES',  defaultValue: true,  description: 'Build backend and frontend Docker images')
+        booleanParam(name: 'RUN_PUSH_IMAGES',   defaultValue: true,  description: 'Push images to the private Nexus registry')
+        booleanParam(name: 'RUN_DEPLOY',        defaultValue: true,  description: 'Deploy to Azure AKS via Helm upgrade')
+        booleanParam(name: 'RUN_VERIFY',        defaultValue: true,  description: 'Wait for AKS rollout to complete')
+    }
+
+    // ── Global environment ─────────────────────────────────────────────────────
+    environment {
+        // Docker registry (Nexus on local proxy VM – accessible via WireGuard)
+        REGISTRY                 = 'host.docker.internal:9001'
+        BACKEND_IMAGE            = "${REGISTRY}/md-reader-backend"
+        FRONTEND_IMAGE           = "${REGISTRY}/md-reader-frontend"
+        IMAGE_TAG                = "${env.BUILD_NUMBER}"
+
+        // Helm
+        HELM_RELEASE             = 'md-reader'
+        HELM_NAMESPACE           = 'md-reader'
+        HELM_CHART               = '.\\helm\\md-reader'
+        HELM_AKS_VALUES          = '.\\helm\\values-aks.yaml'   // AKS-specific overrides
+
+        // Jenkins credentials
+        REGISTRY_CREDENTIALS     = 'nexus-registry-credentials'
+        KUBECONFIG_CREDENTIAL_ID = 'kubeconfig-aks'             // AKS kubeconfig secret file
+
+        // Branch gate
+        TARGET_BRANCH            = 'dev_1.0'
+
+        // ── Explicit tool paths – ensures tools are found when Jenkins runs
+        //    as the SYSTEM account (does not inherit user PATH).
+        PATH = "C:\\Program Files\\Git\\bin;C:\\Program Files\\Git\\cmd;" +
+               "C:\\Users\\BIRENDRA NATH MONDAL\\AppData\\Local\\Programs\\Python\\Python310;" +
+               "C:\\Users\\BIRENDRA NATH MONDAL\\AppData\\Local\\Programs\\Python\\Python310\\Scripts;" +
+               "C:\\Program Files\\nodejs;" +
+               "C:\\Program Files\\Docker\\Docker\\resources\\bin;" +
+               "C:\\Users\\BIRENDRA NATH MONDAL\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Helm.Helm_Microsoft.Winget.Source_8wekyb3d8bbwe\\windows-amd64;" +
+               "${env.PATH}"
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        timestamps()
+    }
+
+    stages {
+
+        // ── 1. Checkout ────────────────────────────────────────────────────────
+        stage('Checkout') {
+            when {
+                expression {
+                    return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                           env.BRANCH_NAME == TARGET_BRANCH
+                }
+            }
+            steps {
+                checkout scm
+                echo "Branch: ${env.GIT_BRANCH}  Commit: ${env.GIT_COMMIT}"
+            }
+        }
+
+        // ── 2. Backend Lint ────────────────────────────────────────────────────
+        // Uses --without-pip venv + python -m pip to avoid the "Unable to create
+        // process" error caused by pip.exe embedding an unquoted Python path that
+        // contains spaces (C:\Users\BIRENDRA NATH MONDAL\...).
+        stage('Backend Lint') {
+            when {
+                allOf {
+                    expression {
+                        return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                               env.BRANCH_NAME == TARGET_BRANCH
+                    }
+                    expression { return params.RUN_BACKEND_LINT }
+                }
+            }
+            steps {
+                dir('backend') {
+                    bat '''
+                        IF EXIST .ci-venv rmdir /s /q .ci-venv
+                        python -m venv --without-pip .ci-venv
+                        python -m pip install --quiet --prefix .ci-venv pip setuptools wheel
+                        call .ci-venv\\Scripts\\activate.bat
+                        python -m pip install --quiet pylint
+                        python -m pip install --quiet -r requirements.txt
+                        python -m pylint --rcfile=../.pylintrc --output-format=text --fail-under=7.0 main.py s3_client.py md_converter.py parquet_handler.py ws_handler.py chatbot/ > .pylint-report.txt 2>&1
+                        type .pylint-report.txt
+                        exit /b %ERRORLEVEL%
+                    '''
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'backend/.pylint-report.txt', allowEmptyArchive: true
+                }
+            }
+        }
+
+        // ── 3. Frontend CI ─────────────────────────────────────────────────────
+        stage('Frontend CI') {
+            when {
+                allOf {
+                    expression {
+                        return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                               env.BRANCH_NAME == TARGET_BRANCH
+                    }
+                    expression { return params.RUN_FRONTEND_CI }
+                }
+            }
+            steps {
+                dir('frontend') {
+                    bat '''
+                        npm ci --prefer-offline
+                        npx tsc --noEmit
+                        npm run build
+                    '''
+                }
+            }
+        }
+
+        // ── 4. Build Docker Images ─────────────────────────────────────────────
+        stage('Build Images') {
+            when {
+                allOf {
+                    expression {
+                        return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                               env.BRANCH_NAME == TARGET_BRANCH
+                    }
+                    expression { return params.RUN_BUILD_IMAGES }
+                }
+            }
+            steps {
+                bat """
+                    docker build -f backend/Dockerfile -t %BACKEND_IMAGE%:%IMAGE_TAG% -t %BACKEND_IMAGE%:latest .
+                    docker build -f frontend/Dockerfile -t %FRONTEND_IMAGE%:%IMAGE_TAG% -t %FRONTEND_IMAGE%:latest .\\frontend
+                """
+            }
+        }
+
+        // ── 5. Push Images to Nexus ────────────────────────────────────────────
+        stage('Push Images') {
+            when {
+                allOf {
+                    expression {
+                        return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                               env.BRANCH_NAME == TARGET_BRANCH
+                    }
+                    expression { return params.RUN_PUSH_IMAGES }
+                }
+            }
+            steps {
+                script {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: REGISTRY_CREDENTIALS,
+                            usernameVariable: 'REG_USER',
+                            passwordVariable: 'REG_PASS'
+                        )
+                    ]) {
+                        bat """
+                            echo %REG_PASS%| docker login %REGISTRY% -u %REG_USER% --password-stdin
+                            docker push %BACKEND_IMAGE%:%IMAGE_TAG%
+                            docker push %BACKEND_IMAGE%:latest
+                            docker push %FRONTEND_IMAGE%:%IMAGE_TAG%
+                            docker push %FRONTEND_IMAGE%:latest
+                        """
+                    }
+                }
+            }
+            post {
+                always {
+                    bat "docker logout %REGISTRY% || exit 0"
+                }
+            }
+        }
+
+        // ── 6. Deploy to AKS via Helm ──────────────────────────────────────────
+        // helm upgrade --install creates the release if it does not yet exist.
+        // -f values-aks.yaml applies AKS-specific overrides (registry IP, ingress
+        // class, resource limits, etc.) on top of the chart defaults.
+        // --set-string injects the freshly built image tag.
+        stage('Deploy to AKS') {
+            when {
+                allOf {
+                    expression {
+                        return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                               env.BRANCH_NAME == TARGET_BRANCH
+                    }
+                    expression { return params.RUN_DEPLOY }
+                }
+            }
+            steps {
+                withCredentials([
+                    file(credentialsId: KUBECONFIG_CREDENTIAL_ID, variable: 'KUBECONFIG')
+                ]) {
+                    bat """
+                        helm upgrade --install %HELM_RELEASE% %HELM_CHART% ^
+                            --namespace %HELM_NAMESPACE% ^
+                            --create-namespace ^
+                            -f %HELM_AKS_VALUES% ^
+                            --set-string "backend.image.registry=%PUBLIC_IP%:9001" ^
+                            --set-string "frontend.image.registry=%PUBLIC_IP%:9001" ^
+                            --set-string "backend.image.tag=%IMAGE_TAG%" ^
+                            --set-string "frontend.image.tag=%IMAGE_TAG%" ^
+                            --atomic ^
+                            --timeout 5m ^
+                            --cleanup-on-fail
+                    """
+                }
+            }
+        }
+
+        // ── 7. Verify AKS Rollout ──────────────────────────────────────────────
+        stage('Verify') {
+            when {
+                allOf {
+                    expression {
+                        return env.GIT_BRANCH == "origin/${TARGET_BRANCH}" ||
+                               env.BRANCH_NAME == TARGET_BRANCH
+                    }
+                    expression { return params.RUN_VERIFY }
+                }
+            }
+            steps {
+                withCredentials([
+                    file(credentialsId: KUBECONFIG_CREDENTIAL_ID, variable: 'KUBECONFIG')
+                ]) {
+                    bat """
+                        kubectl rollout status deployment/%HELM_RELEASE%-backend  -n %HELM_NAMESPACE% --timeout=3m
+                        kubectl rollout status deployment/%HELM_RELEASE%-frontend -n %HELM_NAMESPACE% --timeout=3m
+                    """
+                }
+            }
+        }
+    }
+
+    // ── Post-pipeline ──────────────────────────────────────────────────────────
+    post {
+        success {
+            echo "Prod pipeline succeeded -- ${BACKEND_IMAGE}:${IMAGE_TAG} and ${FRONTEND_IMAGE}:${IMAGE_TAG} deployed to AKS."
+        }
+        failure {
+            echo "Prod pipeline FAILED on branch ${env.GIT_BRANCH} at commit ${env.GIT_COMMIT}."
+        }
+        cleanup {
+            bat """
+                docker rmi %BACKEND_IMAGE%:%IMAGE_TAG%  2>nul || exit 0
+                docker rmi %BACKEND_IMAGE%:latest       2>nul || exit 0
+                docker rmi %FRONTEND_IMAGE%:%IMAGE_TAG% 2>nul || exit 0
+                docker rmi %FRONTEND_IMAGE%:latest      2>nul || exit 0
+            """
+        }
+    }
+}

@@ -1,0 +1,29 @@
+# AKS deployment overrides — do NOT modify values.yaml
+# Applied on top of values.yaml via: helm install -f values.yaml -f values-aks.yaml
+global:
+  imagePullSecrets:
+    - nexus-secret
+
+backend:
+  image:
+    registry: "20.219.109.5:9001"
+    tag: "17"
+
+frontend:
+  image:
+    registry: "20.219.109.5:9001"
+    tag: "17"
+
+# Disable the init job that pulls the Ollama model —
+# gemma4:31b-cloud is a cloud model, no local pull needed.
+ollamaInit:
+  enabled: false
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: ""
+      paths:
+        - path: /
+          pathType: Prefix
