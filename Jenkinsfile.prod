@@ -98,12 +98,9 @@ pipeline {
             steps {
                 dir('backend') {
                     bat '''
-                        IF EXIST .ci-venv rmdir /s /q .ci-venv
-                        python -m venv --without-pip .ci-venv
-                        .ci-venv\\Scripts\\python.exe -m ensurepip --upgrade
-                        .ci-venv\\Scripts\\python.exe -m pip install --quiet pylint
-                        .ci-venv\\Scripts\\python.exe -m pip install --quiet -r requirements.txt
-                        .ci-venv\\Scripts\\python.exe -m pylint --rcfile=../.pylintrc --output-format=text --fail-under=7.0 main.py s3_client.py md_converter.py parquet_handler.py ws_handler.py chatbot/ > .pylint-report.txt 2>&1
+                        python -m pip install --quiet pylint
+                        python -m pip install --quiet -r requirements.txt
+                        python -m pylint --rcfile=../.pylintrc --output-format=text --fail-under=7.0 main.py s3_client.py md_converter.py parquet_handler.py ws_handler.py chatbot/ > .pylint-report.txt 2>&1
                         type .pylint-report.txt
                         exit /b %ERRORLEVEL%
                     '''
