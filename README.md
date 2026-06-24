@@ -24,6 +24,40 @@ MD Reader is a full-stack developer toolbox built with React, Vite, FastAPI, Web
 - Storage: Local disk plus optional S3-compatible storage. LocalStack is used in Docker for local S3.
 - Deployment: Docker Compose, Dockerfiles, Jenkins pipelines, Helm chart.
 
+## Screenshots
+
+### Landing Page
+
+![Landing page](Images/landing_page.png)
+
+### Markdown Reader
+
+![Markdown reader](Images/markdown_file.png)
+
+### JSON Formatter
+
+![JSON formatter](Images/json_formatter.png)
+
+### JSON to YAML Converter
+
+![JSON to YAML converter](Images/Json_to_yaml.png)
+
+### Base64 Encoder and Decoder
+
+![Base64 encoder and decoder](Images/base64_encode_decode.png)
+
+### Parquet Reader
+
+![Parquet file upload](Images/Parquet_file_uploadred.png)
+
+![Parquet file generation](Images/Parquet_file_generation.png)
+
+![Parquet file opened](Images/parquest_file_opened.png)
+
+### Docker Containers
+
+![Docker containers](Images/Docker_containers.png)
+
 ## Project Structure
 
 ```text
